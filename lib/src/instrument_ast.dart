@@ -715,9 +715,11 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
   @override
   void visitSimpleStringLiteral(SimpleStringLiteral node) {
     final val = node.value;
-    if (val.isNotEmpty &&
-        val.length <= 64 &&
-        !_isDirectiveOrErrorLiteral(node)) {
+    if (_isInsideRegExpCall(node) || _looksLikeRegexSyntax(val)) {
+      _harvestRegExpTokens(val);
+    } else if (_isCandidateDictString(val) &&
+        !_isDirectiveOrErrorLiteral(node) &&
+        !_isInsideLargeLiteralCollection(node)) {
       owner.dictionaryTokens.add(val);
     }
     super.visitSimpleStringLiteral(node);
@@ -734,6 +736,28 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     super.visitIntegerLiteral(node);
   }
 
+  void _harvestRegExpTokens(String pattern) {
+    if (pattern.contains(r'\d')) owner.dictionaryTokens.add('0');
+    if (pattern.contains(r'\r\n')) owner.dictionaryTokens.add('\r\n');
+    for (final rawBranch in pattern.split('|')) {
+      if (_plainRegexBranch.hasMatch(rawBranch) &&
+          _isCandidateDictString(rawBranch)) {
+        owner.dictionaryTokens.add(rawBranch);
+      }
+    }
+  }
+
+  static final RegExp _plainRegexBranch = RegExp(r'^[A-Za-z0-9_ ,:;/-]+$');
+  static final RegExp _regexMetaFragments = RegExp(
+    r'\(\?:|\[[a-zA-Z0-9^]|\\[dsSwWbB]',
+  );
+
+  static bool _looksLikeRegexSyntax(String val) =>
+      _regexMetaFragments.hasMatch(val);
+
+  static bool _isCandidateDictString(String val) =>
+      val.isNotEmpty && val.length <= 24 && ' '.allMatches(val).length <= 1;
+
   static bool _isPrintableOrWhitespaceAscii(int v) =>
       (v >= 0x20 && v <= 0x7E) || v == 0x09 || v == 0x0A || v == 0x0D;
 
@@ -745,24 +769,61 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
         _ => false,
       };
 
-  static bool _isDirectiveOrErrorLiteral(AstNode node) {
+  static bool _isInsideRegExpCall(AstNode node) {
+    final parent = node.parent;
+    if (parent is! ArgumentList) return false;
+    return switch (parent.parent) {
+      MethodInvocation(:final methodName) => methodName.name == 'RegExp',
+      InstanceCreationExpression(:final constructorName) =>
+        constructorName.type.name.lexeme == 'RegExp',
+      _ => false,
+    };
+  }
+
+  static bool _isInsideLargeLiteralCollection(AstNode node) {
     for (var cur = node.parent; cur != null; cur = cur.parent) {
-      if (cur is Directive ||
-          cur is Annotation ||
-          cur is AssertStatement ||
-          cur is ThrowExpression) {
-        return true;
-      }
-      if (cur is InstanceCreationExpression &&
-          _isExceptionOrErrorType(cur.constructorName.type.name.lexeme)) {
-        return true;
-      }
+      if (cur is SetOrMapLiteral && cur.elements.length > 32) return true;
+      if (cur is ListLiteral && cur.elements.length > 32) return true;
     }
     return false;
   }
 
-  static bool _isExceptionOrErrorType(String name) =>
-      name.endsWith('Exception') || name.endsWith('Error');
+  static bool _isDirectiveOrErrorLiteral(AstNode node) {
+    for (var cur = node.parent; cur != null; cur = cur.parent) {
+      if (_isExcludedAstContainer(cur)) return true;
+    }
+    return false;
+  }
+
+  static bool _isExcludedAstContainer(AstNode cur) => switch (cur) {
+    Directive() ||
+    Annotation() ||
+    AssertStatement() ||
+    ThrowExpression() ||
+    EnumConstantArguments() => true,
+    NamedExpression(:final name) =>
+      name.label.name == 'name' || name.label.name == 'message',
+    InstanceCreationExpression(:final constructorName) => _isExcludedTypeName(
+      constructorName.type.name.lexeme,
+    ),
+    MethodInvocation(:final methodName) => _isExcludedMethodName(
+      methodName.name,
+    ),
+    _ => false,
+  };
+
+  static bool _isExcludedTypeName(String name) =>
+      name == 'StateError' ||
+      name.endsWith('Exception') ||
+      name.endsWith('Error');
+
+  static bool _isExcludedMethodName(String name) {
+    final lower = name.toLowerCase();
+    return lower.contains('error') ||
+        lower.contains('exception') ||
+        lower.contains('fail') ||
+        lower.contains('warn');
+  }
 }
 
 /// Formats [tokens] as an AFL / `libFuzzer` dictionary (`"escaped_token"` per
