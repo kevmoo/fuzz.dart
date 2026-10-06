@@ -783,5 +783,76 @@ void wrapFormatException(String label, String input) {}
         expect(formatted, contains('"%"'));
       },
     );
+
+    test('fuzz run synthesizes fuzz_entrypoint.dart for zero-dependency '
+        'void fuzzTarget(Uint8List) targets', () async {
+      await d.dir('zero_dep_pkg', [
+        d.file('pubspec.yaml', '''
+name: zero_dep_pkg
+environment:
+  sdk: ^3.7.0
+'''),
+        d.dir('.dart_tool', [
+          d.file(
+            'package_config.json',
+            jsonEncode({
+              'configVersion': 2,
+              'packages': [
+                {
+                  'name': 'zero_dep_pkg',
+                  'rootUri': '../',
+                  'packageUri': 'lib/',
+                  'languageVersion': '3.7',
+                },
+              ],
+            }),
+          ),
+        ]),
+        d.dir('lib', [
+          d.file('zero_dep_pkg.dart', '''
+import 'dart:typed_data';
+
+void checkBytes(Uint8List bytes) {
+  if (bytes.isNotEmpty && bytes[0] == 0x41) {
+    return;
+  }
+}
+'''),
+        ]),
+        d.dir('test', [
+          d.dir('fuzz', [
+            d.file('zero_dep_fuzz.dart', '''
+import 'dart:typed_data';
+import 'package:zero_dep_pkg/zero_dep_pkg.dart';
+
+void fuzzTarget(Uint8List bytes) {
+  checkBytes(bytes);
+}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final pkgRoot = p.join(d.sandbox, 'zero_dep_pkg');
+      final fuzzBin = p.join(Directory.current.path, 'bin', 'fuzz.dart');
+      final res = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--target=test/fuzz/zero_dep_fuzz.dart',
+        '--mode=pure-dart',
+        '--runs=20',
+      ]);
+      expect(
+        res.exitCode,
+        equals(0),
+        reason: 'stdout:\n${res.stdout}\nstderr:\n${res.stderr}',
+      );
+      expect(
+        File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'fuzz_entrypoint.dart'))
+            .existsSync(),
+        isTrue,
+      );
+    });
   });
 }
