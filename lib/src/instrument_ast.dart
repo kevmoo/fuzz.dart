@@ -801,16 +801,21 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     AssertStatement() ||
     ThrowExpression() ||
     EnumConstantArguments() => true,
-    NamedExpression(:final name) =>
-      name.label.name == 'name' || name.label.name == 'message',
     InstanceCreationExpression(:final constructorName) => _isExcludedTypeName(
       constructorName.type.name.lexeme,
     ),
     MethodInvocation(:final methodName) => _isExcludedMethodName(
       methodName.name,
     ),
-    _ => false,
+    _ => _isErrorNamedArgument(cur),
   };
+
+  static bool _isErrorNamedArgument(AstNode cur) {
+    if (cur.parent is! ArgumentList) return false;
+    final tok = cur.beginToken;
+    return tok.next?.lexeme == ':' &&
+        (tok.lexeme == 'name' || tok.lexeme == 'message');
+  }
 
   static bool _isExcludedTypeName(String name) =>
       name == 'StateError' ||
