@@ -1,0 +1,156 @@
+@TestOn('vm')
+library;
+
+import 'dart:async';
+
+import 'package:fuzz/fuzz.dart';
+import 'package:test/test.dart';
+
+void main() {
+  group('Track 1 Combinators & Oracles', () {
+    test('verifyChunkSplitEquivalence passes for chunk-invariant parser', () {
+      verifyChunkSplitEquivalence<List<int>>(
+        generateEncodedStream: (rng) =>
+            List<int>.generate(rng.nextInt(30), (_) => rng.nextInt(256)),
+        parseFull: (bytes) => bytes,
+        parseChunked: (chunks) => [for (final c in chunks) ...c],
+        iterations: 50,
+      );
+    });
+
+    test(
+      'verifyChunkSplitEquivalence terminates for maxStep == 1 and rejects < 1',
+      () {
+        verifyChunkSplitEquivalence<List<int>>(
+          generateEncodedStream: (_) => const [10, 20, 30, 40],
+          parseFull: (bytes) => bytes,
+          parseChunked: (chunks) => [for (final c in chunks) ...c],
+          iterations: 10,
+          maxStep: 1,
+        );
+        expect(
+          () => verifyChunkSplitEquivalence<List<int>>(
+            generateEncodedStream: (_) => const [1],
+            parseFull: (bytes) => bytes,
+            parseChunked: (chunks) => [for (final c in chunks) ...c],
+            maxStep: 0,
+          ),
+          throwsArgumentError,
+        );
+      },
+    );
+
+    test(
+      'verifyChunkSplitEquivalence throws StateError on chunk-boundary bug',
+      () {
+        expect(
+          () => verifyChunkSplitEquivalence<List<int>>(
+            generateEncodedStream: (_) => const [1, 2, 3, 4, 5],
+            parseFull: (bytes) => bytes,
+            // Buggy chunked parser drops the first byte of every chunk after
+            // chunk 0.
+            parseChunked: (chunks) {
+              final out = <int>[];
+              var first = true;
+              for (final c in chunks) {
+                out.addAll(first ? c : c.skip(1));
+                first = false;
+              }
+              return out;
+            },
+            iterations: 10,
+          ),
+          throwsStateError,
+        );
+      },
+    );
+
+    test(
+      'verifyChunkSplitEquivalence compares nested List<List<int>> deeply',
+      () {
+        verifyChunkSplitEquivalence<List<List<int>>>(
+          generateEncodedStream: (_) => const [1, 2, 3, 4],
+          parseFull: (bytes) => [
+            bytes.sublist(0, 2).toList(),
+            bytes.sublist(2).toList(),
+          ],
+          parseChunked: (chunks) {
+            final flat = [for (final c in chunks) ...c];
+            return [flat.sublist(0, 2).toList(), flat.sublist(2).toList()];
+          },
+          iterations: 5,
+        );
+      },
+    );
+
+    test(
+      'captureStreamZoneErrors catches uncaught zone throws and hung streams',
+      () async {
+        // Simulate MIME-1: a transformer whose onData throws synchronously into
+        // the Zone instead of routing to sink.addError.
+        final brokenTransformer =
+            StreamTransformer<List<int>, int>.fromHandlers(
+              handleData: (data, sink) {
+                scheduleMicrotask(() {
+                  throw const FormatException('escaped to zone');
+                });
+              },
+            );
+
+        final result = await captureStreamZoneErrors<List<int>, int>(
+          Stream<List<int>>.value(const [1, 2, 3]),
+          brokenTransformer,
+        );
+        expect(result.uncaughtZoneError, isA<FormatException>());
+
+        // Simulate a stream transformer whose onCancel hangs indefinitely.
+        final hungCancelTransformer = StreamTransformer<List<int>, int>((
+          input,
+          cancelOnError,
+        ) {
+          late StreamController<int> controller;
+          controller = StreamController<int>(
+            onListen: () {},
+            onCancel: () => Completer<void>().future,
+          );
+          return controller.stream.listen(null);
+        });
+        final hungResult = await captureStreamZoneErrors<List<int>, int>(
+          Stream<List<int>>.value(const [1]),
+          hungCancelTransformer,
+          timeout: const Duration(milliseconds: 10),
+        );
+        expect(hungResult.completed, isFalse);
+      },
+    );
+
+    test(
+      'verifyNoUnescapedCrlf rejects CR, LF, and NUL control characters',
+      () {
+        verifyNoUnescapedCrlf('session=abc; Domain=example.com');
+        expect(
+          () => verifyNoUnescapedCrlf('session=abc\r\nX-Injected: 1'),
+          throwsStateError,
+        );
+        expect(
+          () => verifyNoUnescapedCrlf('session=abc\nX-Injected: 1'),
+          throwsStateError,
+        );
+        expect(
+          () => verifyNoUnescapedCrlf('session=abc\x00'),
+          throwsStateError,
+        );
+      },
+    );
+
+    test(
+      'boundary corpora include 64-bit signed overflow and 65-bit hex wrap',
+      () {
+        expect(fuzzBoundaryInts, contains(-9223372036854775808));
+        expect(fuzzBoundaryInts, contains(9223372036854775807));
+        expect(fuzzBoundaryHexStrings, contains('8000000000000000'));
+        expect(fuzzBoundaryHexStrings, contains('10000000000000000'));
+      },
+    );
+  });
+}

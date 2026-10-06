@@ -1,0 +1,14 @@
+.dart_tool/
+build/
+*.so
+*.dylib
+*.wasm
+*.js
+*.exe
+*.aot
+*.dwarf
+crash-*
+leak-*
+timeout-*
+oom-*
+pubspec.lock

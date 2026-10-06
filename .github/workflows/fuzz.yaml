@@ -1,0 +1,97 @@
+name: Fuzz
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: 'Path to the Dart fuzz harness script (relative to package-root)'
+        type: string
+        required: true
+      package-root:
+        description: 'Directory of the target package to instrument and fuzz'
+        type: string
+        default: '.'
+        required: false
+      mode:
+        description: 'Fuzzing mode (cgf or pure-dart)'
+        type: string
+        default: 'cgf'
+        required: false
+      runs:
+        description: 'Maximum number of fuzzing executions (-runs=<N>)'
+        type: number
+        default: 200000
+        required: false
+      max-len:
+        description: 'Maximum input length in bytes (-max_len=<N>)'
+        type: number
+        default: 64
+        required: false
+      max-total-time:
+        description: 'Maximum total fuzzing time in seconds (-max_total_time=<S>)'
+        type: number
+        default: 60
+        required: false
+      sdk:
+        description: 'Dart SDK channel (stable, beta, dev, main)'
+        type: string
+        default: 'dev'
+        required: false
+      local_debug:
+        description: 'Use local checkout of package:fuzz (only inside kevmoo/fuzz.dart)'
+        type: boolean
+        default: false
+        required: false
+
+jobs:
+  fuzz:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: ${{ inputs.sdk }}
+
+      - uses: actions/cache@v5
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-cache-${{ hashFiles('**/pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pub-cache-
+
+      - name: Install clang and LLVM compiler-rt
+        if: ${{ inputs.mode == 'cgf' }}
+        run: sudo apt-get update && sudo apt-get install -y clang llvm
+
+      - name: Resolve target package dependencies
+        working-directory: ${{ inputs.package-root }}
+        run: dart pub get
+
+      - name: Activate local `package:fuzz`
+        if: ${{ inputs.local_debug }}
+        run: dart pub global activate -s path .
+
+      - name: Activate `package:fuzz` from kevmoo/fuzz.dart
+        if: ${{ !inputs.local_debug }}
+        run: dart pub global activate -s git https://github.com/kevmoo/fuzz.dart.git --git-ref main
+
+      - name: Run fuzz
+        working-directory: ${{ inputs.package-root }}
+        env:
+          FUZZ_TARGET: ${{ inputs.target }}
+          FUZZ_MODE: ${{ inputs.mode }}
+          FUZZ_RUNS: ${{ inputs.runs }}
+          FUZZ_MAX_LEN: ${{ inputs.max-len }}
+          FUZZ_MAX_TOTAL_TIME: ${{ inputs.max-total-time }}
+        run: |
+          dart pub global run fuzz run \
+            --package-root=. \
+            --target="$FUZZ_TARGET" \
+            --mode="$FUZZ_MODE" \
+            --runs="$FUZZ_RUNS" \
+            --max-len="$FUZZ_MAX_LEN" \
+            --max-total-time="$FUZZ_MAX_TOTAL_TIME"
