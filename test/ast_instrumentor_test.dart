@@ -718,10 +718,10 @@ void main() {
       final manifestMap = jsonDecode(
         File(res.edgeManifestPath).readAsStringSync(),
       ) as Map<String, Object?>;
-      final siteFiles =
-          ((manifestMap['sites'] as List<Object?>).cast<Map<String, Object?>>())
-              .map((s) => s['file'] as String)
-              .toSet();
+      final siteFiles = (manifestMap['sites'] as List<Object?>)
+          .cast<Map<String, Object?>>()
+          .map((s) => s['file'] as String)
+          .toSet();
       expect(siteFiles, contains('lib/host_pkg.dart'));
       expect(siteFiles, contains('package:dep_pkg/lib/dep_pkg.dart'));
     });

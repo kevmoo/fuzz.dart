@@ -757,7 +757,7 @@ typedef OverlayResult = ({
 });
 
 /// Builds a non-destructive AST-instrumented copy of a target package's `lib/`
-/// directory (plus any requested [additionalPackages]) inside
+/// directory (plus any requested dependency packages) inside
 /// `<workDir>/instrumented/` and writes an overlay
 /// `<workDir>/package_config.json`.
 class PackageOverlayInstrumentor {
@@ -800,7 +800,6 @@ class PackageOverlayInstrumentor {
       instrumentedLibDir: instrumentedLibDir,
       instrumentor: instrumentor,
       runtimeImport: runtimeImport,
-      filePrefix: 'lib',
     );
 
     final pkgConfigFile = _findPackageConfigFile(rootDir);
