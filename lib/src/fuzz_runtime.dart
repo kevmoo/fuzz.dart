@@ -622,35 +622,43 @@ class FuzzRuntime {
     List<Uint8List> dictTokens,
   ) {
     final op = rng.nextInt(dictTokens.isEmpty ? 6 : 7);
-    if (op == 0 && list.length < maxLen) {
-      final pos = list.isEmpty ? 0 : rng.nextInt(list.length + 1);
-      list.insert(pos, rng.nextInt(256));
-    } else if (op == 1 && list.isNotEmpty) {
-      list.removeAt(rng.nextInt(list.length));
-    } else if (op == 2 && list.isNotEmpty) {
-      list[rng.nextInt(list.length)] ^= 1 << rng.nextInt(8);
-    } else if (op == 3) {
-      final seq = _torcBytes[rng.nextInt(_torcSize)];
-      if (seq.isNotEmpty) {
-        _writeBytesAtOffset(list, seq, rng, maxLen);
-      }
-    } else if (op == 4) {
-      final idx = rng.nextInt(_torcSize);
-      final val = rng.nextBool() ? _torcIntsA[idx] : _torcIntsB[idx];
-      final bd = ByteData(8)..setInt64(0, val, Endian.little);
-      _writeBytesAtOffset(list, bd.buffer.asUint8List(), rng, maxLen);
-    } else if (op == 5) {
-      final hex =
-          fuzzBoundaryHexStrings[rng.nextInt(fuzzBoundaryHexStrings.length)];
-      _writeBytesAtOffset(
-        list,
-        Uint8List.fromList(ascii.encode(hex)),
-        rng,
-        maxLen,
-      );
-    } else if (dictTokens.isNotEmpty) {
-      final token = dictTokens[rng.nextInt(dictTokens.length)];
-      _writeBytesAtOffset(list, token, rng, maxLen);
+    switch (op) {
+      case 0 when list.length < maxLen:
+        final pos = list.isEmpty ? 0 : rng.nextInt(list.length + 1);
+        list.insert(pos, rng.nextInt(256));
+      case 1 when list.isNotEmpty:
+        list.removeAt(rng.nextInt(list.length));
+      case 2 when list.isNotEmpty:
+        list[rng.nextInt(list.length)] ^= 1 << rng.nextInt(8);
+      case >= 3:
+        final bytes = _sampleSpliceBytes(op, rng, dictTokens);
+        if (bytes.isNotEmpty) {
+          _writeBytesAtOffset(list, bytes, rng, maxLen);
+        }
+    }
+  }
+
+  static Uint8List _sampleSpliceBytes(
+    int op,
+    Random rng,
+    List<Uint8List> dictTokens,
+  ) {
+    switch (op) {
+      case 3:
+        return _torcBytes[rng.nextInt(_torcSize)];
+      case 4:
+        final idx = rng.nextInt(_torcSize);
+        final val = rng.nextBool() ? _torcIntsA[idx] : _torcIntsB[idx];
+        final bd = ByteData(8)..setInt64(0, val, Endian.little);
+        return bd.buffer.asUint8List();
+      case 5:
+        final hex =
+            fuzzBoundaryHexStrings[rng.nextInt(fuzzBoundaryHexStrings.length)];
+        return Uint8List.fromList(ascii.encode(hex));
+      default:
+        return dictTokens.isEmpty
+            ? Uint8List(0)
+            : dictTokens[rng.nextInt(dictTokens.length)];
     }
   }
 
