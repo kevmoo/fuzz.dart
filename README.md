@@ -16,11 +16,24 @@ fuzzing combinators for Dart packages.
    checkers (`captureStreamZoneErrors`), CRLF injection validators
    (`verifyNoUnescapedCrlf`), 64-bit integer boundary corpora
    (`fuzzBoundaryInts`, `fuzzBoundaryHexStrings`), and an in-process pure-Dart
-   coverage-guided mutator when `clang++` is unavailable.
+   coverage-guided mutator for environments where `clang++` with LLVM
+   `compiler-rt` (`libclang_rt.fuzzer_no_main`) is unavailable (such as stock
+   macOS Xcode Command Line Tools without Homebrew `llvm`, Windows CI runners,
+   or zero-native-toolchain `dart test` smoke runs).
 
 ## Usage
 
 ### Writing a Fuzz Target
+
+> [!NOTE]
+>
+> `FuzzRuntime.runDriver` callbacks must execute **synchronously** within each
+> iteration because `LLVMFuzzerRunDriver` invokes the callback on the main
+> thread via a synchronous `dart:ffi` trampoline without returning to the Dart
+> event loop between inputs. For chunked converters, drive
+> `startChunkedConversion` (`addSlice` / `close`) synchronously inside
+> `runDriver`; for asynchronous `StreamTransformer` error-contract checks, use
+> `captureStreamZoneErrors` in `dart test`.
 
 ```dart
 import 'dart:typed_data';
@@ -47,6 +60,11 @@ void main(List<String> args) {
 ```bash
 # Run coverage-guided libFuzzer (requires clang++ with compiler-rt):
 dart run fuzz run --package-root=. --target=test/fuzz/my_fuzz.dart
+
+# Instrument delegated dependency packages (e.g. front_matter -> package:yaml)
+# and isolate parallel runs with --work-dir:
+dart run fuzz run --package-root=. --instrument-packages=yaml,source_span \
+  --work-dir=.dart_tool/fuzz/my_fuzz --target=test/fuzz/my_fuzz.dart
 
 # Run for 30 seconds in CI and emit coverage_report.json:
 dart run fuzz run --package-root=. --target=test/fuzz/my_fuzz.dart -- -max_total_time=30

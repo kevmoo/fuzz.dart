@@ -2,8 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
-/// Standard 64-bit signed/unsigned integer boundary values for stressing length
-/// and size parsers (`HP-1`, `HP-2`, `ASN1-1`, `RFW-1`, `RFW-2`).
+/// Standard 64-bit signed/unsigned integer boundary values for stressing length,
+/// framing, and size parsers (including `-2^63` signed overflow and 32/64-bit
+/// width boundaries).
 const List<int> fuzzBoundaryInts = [
   -9223372036854775808, // -2^63 (0x8000000000000000 signed overflow)
   -2147483649,
@@ -51,6 +52,14 @@ typedef StreamContractResult<T> = ({
 /// Verifies that a chunked or streaming parser produces identical output when a
 /// valid encoded byte stream is split across arbitrary chunk boundaries
 /// (`0`-byte, `1`-byte, and random `1..maxStep`-byte slices).
+///
+/// - [maxStep]: Maximum chunk length (in bytes, must be `>= 1`) for each random
+///   slice. Small values (such as the default `7`) force frequent cuts across
+///   multi-byte delimiters, varints, and UTF-8 sequences, interspersed with
+///   `0`-byte empty chunks.
+/// - [iterations]: Number of random stream-generation and chunk-slicing trials
+///   to run.
+/// - [seed]: Deterministic RNG seed for reproducible chunk splits.
 ///
 /// Throws a [StateError] with a detailed diff if any chunk split diverges from
 /// the single-buffer conversion result.
@@ -116,7 +125,7 @@ bool _defaultEquals<T>(T a, T b) {
 
 /// Runs an asynchronous [StreamTransformer] inside a guarded [Zone], ensuring
 /// subscriptions are deterministically cancelled and detecting uncaught zone
-/// errors or hung output streams (`MIME-1` pattern).
+/// errors or hung output streams when malformed chunks arrive.
 Future<StreamContractResult<T>> captureStreamZoneErrors<S, T>(
   Stream<S> input,
   StreamTransformer<S, T> transformer, {
@@ -166,8 +175,9 @@ Future<StreamContractResult<T>> captureStreamZoneErrors<S, T>(
   );
 }
 
-/// Verifies that a serialized header/cookie/URI value never contains raw CR
-/// (`\r`), LF (`\n`), or NUL (`\x00`) control characters (`HTTP-2` oracle).
+/// Verifies that a serialized header, cookie, or URI value never contains raw
+/// CR (`\r`), LF (`\n`), or NUL (`\x00`) control characters that could enable
+/// HTTP header or response-splitting injection.
 void verifyNoUnescapedCrlf(String serialized, {String context = 'serialized'}) {
   for (var i = 0; i < serialized.length; i++) {
     final cu = serialized.codeUnitAt(i);

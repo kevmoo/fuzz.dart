@@ -48,6 +48,18 @@ class _InstrumentCommand extends Command<int> {
         defaultsTo: '.',
       )
       ..addOption(
+        'work-dir',
+        help:
+            'Directory for instrumented overlay and manifest (defaults to '
+            '<package-root>/.dart_tool/fuzz).',
+      )
+      ..addMultiOption(
+        'instrument-packages',
+        help:
+            'Additional dependency packages from package_config.json to '
+            'AST-instrument (e.g. yaml,source_span).',
+      )
+      ..addOption(
         'input',
         help: 'Single .dart source file to instrument (optional).',
       )
@@ -81,8 +93,12 @@ class _InstrumentCommand extends Command<int> {
     }
 
     final pkgRoot = opts['package-root'] as String;
+    final workDir = opts['work-dir'] as String?;
+    final additionalPackages = opts['instrument-packages'] as List<String>;
     final res = await PackageOverlayInstrumentor.instrumentPackage(
       packageRoot: pkgRoot,
+      workDir: workDir,
+      additionalPackages: additionalPackages,
     );
     stdout.writeln(
       'Instrumented package:${res.packageName} '
@@ -116,6 +132,18 @@ class _RunCommand extends Command<int> {
         defaultsTo: '.',
       )
       ..addOption(
+        'work-dir',
+        help:
+            'Directory for instrumented overlay and coverage artifacts '
+            '(defaults to <package-root>/.dart_tool/fuzz).',
+      )
+      ..addMultiOption(
+        'instrument-packages',
+        help:
+            'Additional dependency packages from package_config.json to '
+            'AST-instrument (e.g. yaml,source_span).',
+      )
+      ..addOption(
         'mode',
         help: 'Fuzzing execution mode.',
         allowed: const ['cgf', 'pure-dart'],
@@ -129,7 +157,7 @@ class _RunCommand extends Command<int> {
       ..addOption(
         'max-len',
         help: 'Maximum input length in bytes (-max_len=<N>).',
-        defaultsTo: '64',
+        defaultsTo: '4096',
       )
       ..addOption(
         'max-total-time',
@@ -157,6 +185,11 @@ class _RunCommand extends Command<int> {
   Future<int> run() async {
     final opts = argResults!;
     final pkgRoot = p.normalize(p.absolute(opts['package-root'] as String));
+    final rawWorkDir = opts['work-dir'] as String?;
+    final fuzzDir = rawWorkDir != null && rawWorkDir.isNotEmpty
+        ? p.normalize(p.absolute(rawWorkDir))
+        : p.join(pkgRoot, '.dart_tool', 'fuzz');
+    final additionalPackages = opts['instrument-packages'] as List<String>;
     final rawTarget = opts['target'] as String;
     var targetPath = p.normalize(p.absolute(rawTarget));
     if (!File(targetPath).existsSync()) {
@@ -172,6 +205,8 @@ class _RunCommand extends Command<int> {
 
     final overlay = await PackageOverlayInstrumentor.instrumentPackage(
       packageRoot: pkgRoot,
+      workDir: fuzzDir,
+      additionalPackages: additionalPackages,
     );
     stdout.writeln(
       'Prepared AST overlay for package:${overlay.packageName} '
@@ -180,7 +215,6 @@ class _RunCommand extends Command<int> {
       '${overlay.switchesInserted} switches).',
     );
 
-    final fuzzDir = p.join(pkgRoot, '.dart_tool', 'fuzz');
     final siteHitsPath = p.join(fuzzDir, 'site_hits.bin');
     final siteHitsFile = File(siteHitsPath);
     if (siteHitsFile.existsSync()) {

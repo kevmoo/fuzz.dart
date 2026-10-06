@@ -241,8 +241,15 @@ class FuzzRuntime {
     File(targetPath).writeAsBytesSync(siteHits);
   }
 
-  /// Drives [target] using either native `libFuzzer` ([FuzzMode.cgf]) or the
-  /// pure-Dart coverage-guided mutator ([FuzzMode.pureDart]).
+  /// Drives [target] synchronously using either native `libFuzzer`
+  /// ([FuzzMode.cgf]) or the pure-Dart coverage-guided mutator
+  /// ([FuzzMode.pureDart]).
+  ///
+  /// Note: [target] must execute synchronously within each invocation because
+  /// `LLVMFuzzerRunDriver` invokes [target] via a synchronous FFI callback on
+  /// the main thread without returning to the Dart event loop between inputs.
+  /// For asynchronous `StreamTransformer` error-contract testing, use
+  /// [captureStreamZoneErrors].
   static int runDriver(
     int Function(Uint8List data) target, {
     List<String> fuzzerArgs = const ['-runs=100000'],
@@ -277,7 +284,7 @@ class FuzzRuntime {
         return target(copy);
       } on Object catch (e, st) {
         flushSiteHits();
-        _reportUnhandledCrash(copy, e, st);
+        _reportUnhandledCrash(copy, e, st, fuzzerArgs: fuzzerArgs);
       }
     }
 
@@ -305,8 +312,10 @@ class FuzzRuntime {
   static Never _reportUnhandledCrash(
     Uint8List data,
     Object error,
-    StackTrace st,
-  ) {
+    StackTrace st, {
+    List<String> fuzzerArgs = const [],
+  }) {
+    final crashPath = _writeCrashArtifact(data, fuzzerArgs);
     final hex = data
         .map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}')
         .join(', ');
@@ -323,33 +332,70 @@ class FuzzRuntime {
         'Stack trace (top 8 frames):\n'
         '${st.toString().split('\n').take(8).join('\n')}',
       )
+      ..writeln('Test unit written to $crashPath')
       ..writeln('========================================================\n');
     exit(77);
+  }
+
+  static String _writeCrashArtifact(Uint8List data, List<String> fuzzerArgs) {
+    final path = _resolveCrashArtifactPath(data, fuzzerArgs);
+    final file = File(path);
+    file.parent.createSync(recursive: true);
+    file.writeAsBytesSync(data);
+    return path;
+  }
+
+  static String _resolveCrashArtifactPath(
+    Uint8List data,
+    List<String> fuzzerArgs,
+  ) {
+    var prefix = './';
+    for (final arg in fuzzerArgs) {
+      if (arg.startsWith('-exact_artifact_path=')) {
+        final exact = arg.substring('-exact_artifact_path='.length);
+        if (exact.isNotEmpty) return exact;
+      } else if (arg.startsWith('-artifact_prefix=')) {
+        prefix = arg.substring('-artifact_prefix='.length);
+      }
+    }
+    return '${prefix}crash-${_fnv1a64Hex(data)}';
+  }
+
+  static String _fnv1a64Hex(Uint8List data) {
+    var hash = 0xcbf29ce484222325;
+    for (var i = 0; i < data.length; i++) {
+      hash ^= data[i];
+      hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
+    }
+    final hi = ((hash >>> 32) & 0xFFFFFFFF).toRadixString(16).padLeft(8, '0');
+    final lo = (hash & 0xFFFFFFFF).toRadixString(16).padLeft(8, '0');
+    return '$hi$lo';
   }
 
   static int _runPureDartDriver(
     int Function(Uint8List data) target, {
     required List<String> fuzzerArgs,
   }) {
-    final (:runs, :maxLen, :maxTotalTime, :corpusPaths) = _parsePureDartFlags(
-      fuzzerArgs,
-    );
-    final rng = Random(1337);
+    final (:runs, :maxLen, :maxTotalTime, :seed, :corpusPaths) =
+        _parsePureDartFlags(fuzzerArgs);
+    final rng = Random(seed);
     final globalMaxMap = Uint8List(numCounters);
-    final corpus = <Uint8List>[
-      Uint8List(0),
-      ..._loadSeedCorpusFiles(corpusPaths),
-      for (final hex in fuzzBoundaryHexStrings)
-        Uint8List.fromList(ascii.encode('$hex\r\n')),
-    ];
+    final (:corpus, :persistDir) = _initPureDartCorpus(corpusPaths);
     final initialCorpusLen = corpus.length;
-    final stopwatch = maxTotalTime > 0 ? (Stopwatch()..start()) : null;
+    final stopwatch = Stopwatch()..start();
+    var totalCovEdges = 0;
+    var completedRuns = 0;
 
-    for (var i = 0; i < runs; i++) {
-      if (stopwatch != null &&
-          stopwatch.elapsedMilliseconds >= maxTotalTime * 1000) {
-        break;
-      }
+    stderr.writeln('INFO: Seed: $seed');
+    covMap.fillRange(0, numCounters, 0);
+
+    for (
+      var i = 0;
+      i < runs &&
+          (maxTotalTime <= 0 ||
+              stopwatch.elapsedMilliseconds < maxTotalTime * 1000);
+      i++
+    ) {
       final isInitialSeed = i < initialCorpusLen;
       final mutated = isInitialSeed
           ? corpus[i]
@@ -358,20 +404,58 @@ class FuzzRuntime {
               rng,
               maxLen,
             );
-      covMap.fillRange(0, numCounters, 0);
       _resetPerInputState();
       final copy = Uint8List.fromList(mutated);
       try {
         target(copy);
       } on Object catch (e, st) {
         flushSiteHits();
-        _reportUnhandledCrash(copy, e, st);
+        _reportUnhandledCrash(copy, e, st, fuzzerArgs: fuzzerArgs);
       }
-      if (_mergeCoverage(covMap, globalMaxMap) && !isInitialSeed) {
+      completedRuns = i + 1;
+      final addedEdges = _mergeAndClearCoverage(covMap, globalMaxMap);
+      totalCovEdges += addedEdges;
+      if (addedEdges > 0 && !isInitialSeed) {
         corpus.add(mutated);
+        if (persistDir != null) {
+          File('$persistDir/${_fnv1a64Hex(mutated)}').writeAsBytesSync(mutated);
+        }
+        _logPureDartProgress('NEW', completedRuns, totalCovEdges, corpus);
+      } else if (completedRuns == initialCorpusLen) {
+        _logPureDartProgress('INITED', completedRuns, totalCovEdges, corpus);
       }
     }
+    _logPureDartProgress('DONE', completedRuns, totalCovEdges, corpus);
     return 0;
+  }
+
+  static ({List<Uint8List> corpus, String? persistDir}) _initPureDartCorpus(
+    List<String> corpusPaths,
+  ) {
+    String? persistDir;
+    if (corpusPaths.isNotEmpty &&
+        FileSystemEntity.typeSync(corpusPaths.first) ==
+            FileSystemEntityType.directory) {
+      persistDir = corpusPaths.first;
+    }
+    final loaded = _loadSeedCorpusFiles(corpusPaths);
+    final corpus = <Uint8List>[if (loaded.isEmpty) Uint8List(0), ...loaded];
+    return (corpus: corpus, persistDir: persistDir);
+  }
+
+  static void _logPureDartProgress(
+    String tag,
+    int iter,
+    int covEdges,
+    List<Uint8List> corpus,
+  ) {
+    var totalBytes = 0;
+    for (final item in corpus) {
+      totalBytes += item.length;
+    }
+    stderr.writeln(
+      '#$iter\t$tag\tcov: $covEdges corp: ${corpus.length}/${totalBytes}b',
+    );
   }
 
   static List<Uint8List> _loadSeedCorpusFiles(List<String> paths) {
@@ -391,11 +475,18 @@ class FuzzRuntime {
     return seeds;
   }
 
-  static ({int runs, int maxLen, int maxTotalTime, List<String> corpusPaths})
+  static ({
+    int runs,
+    int maxLen,
+    int maxTotalTime,
+    int seed,
+    List<String> corpusPaths,
+  })
   _parsePureDartFlags(List<String> args) {
     var runs = 50000;
-    var maxLen = 64;
+    var maxLen = 4096;
     var maxTotalTime = 0;
+    var seed = 0;
     final corpusPaths = <String>[];
     for (final arg in args) {
       if (arg.startsWith('-runs=')) {
@@ -406,28 +497,48 @@ class FuzzRuntime {
         maxTotalTime =
             int.tryParse(arg.substring('-max_total_time='.length)) ??
             maxTotalTime;
+      } else if (arg.startsWith('-seed=')) {
+        seed = int.tryParse(arg.substring('-seed='.length)) ?? seed;
       } else if (!arg.startsWith('-')) {
         corpusPaths.add(arg);
       }
     }
+    final resolvedSeed = seed != 0
+        ? seed
+        : ((DateTime.now().microsecondsSinceEpoch & 0x7FFFFFFF) | 1);
     return (
       runs: runs,
       maxLen: maxLen,
       maxTotalTime: maxTotalTime,
+      seed: resolvedSeed,
       corpusPaths: corpusPaths,
     );
   }
 
-  static bool _mergeCoverage(Uint8List current, Uint8List globalMax) {
-    var foundNew = false;
-    for (var i = 0; i < numCounters; i++) {
-      final c = current[i];
-      if (c > globalMax[i]) {
-        globalMax[i] = c;
-        foundNew = true;
+  /// Scans [current] in 64-bit word chunks (`8,192` words instead of `65,536`
+  /// bytes), merges new maximum hit counts into [globalMax], zeroes non-zero
+  /// words in [current] in place, and returns the count of newly improved
+  /// edges.
+  static int _mergeAndClearCoverage(Uint8List current, Uint8List globalMax) {
+    final words = Uint64List.view(
+      current.buffer,
+      current.offsetInBytes,
+      numCounters >> 3,
+    );
+    var newEdges = 0;
+    for (var w = 0; w < words.length; w++) {
+      if (words[w] == 0) continue;
+      final base = w << 3;
+      for (var i = base; i < base + 8; i++) {
+        final c = current[i];
+        if (c > globalMax[i]) {
+          if (globalMax[i] == 0) newEdges++;
+          globalMax[i] = c;
+        }
       }
+      words[w] = 0;
     }
-    return foundNew;
+    return newEdges;
   }
 
   static Uint8List _mutatePureDartInput(
@@ -436,7 +547,15 @@ class FuzzRuntime {
     int maxLen,
   ) {
     final list = base.toList();
-    final op = rng.nextInt(5);
+    final steps = rng.nextInt(4) + 1;
+    for (var s = 0; s < steps; s++) {
+      _applySingleMutation(list, rng, maxLen);
+    }
+    return Uint8List.fromList(list);
+  }
+
+  static void _applySingleMutation(List<int> list, Random rng, int maxLen) {
+    final op = rng.nextInt(6);
     if (op == 0 && list.length < maxLen) {
       final pos = list.isEmpty ? 0 : rng.nextInt(list.length + 1);
       list.insert(pos, rng.nextInt(256));
@@ -449,13 +568,21 @@ class FuzzRuntime {
       if (seq.isNotEmpty) {
         _writeBytesAtOffset(list, seq, rng, maxLen);
       }
-    } else {
+    } else if (op == 4) {
       final idx = rng.nextInt(_torcSize);
       final val = rng.nextBool() ? _torcIntsA[idx] : _torcIntsB[idx];
       final bd = ByteData(8)..setInt64(0, val, Endian.little);
       _writeBytesAtOffset(list, bd.buffer.asUint8List(), rng, maxLen);
+    } else {
+      final hex =
+          fuzzBoundaryHexStrings[rng.nextInt(fuzzBoundaryHexStrings.length)];
+      _writeBytesAtOffset(
+        list,
+        Uint8List.fromList(ascii.encode(hex)),
+        rng,
+        maxLen,
+      );
     }
-    return Uint8List.fromList(list);
   }
 
   static void _writeBytesAtOffset(
