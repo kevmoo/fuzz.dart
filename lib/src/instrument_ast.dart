@@ -71,6 +71,10 @@ class AstInstrumentor {
   /// Every AST site instrumented across one or more [instrumentSource] calls.
   final List<FuzzSiteEntry> sites = [];
 
+  /// String and character literals harvested from instrumented ASTs for
+  /// `libFuzzer` dictionary pre-seeding (`-dict=`).
+  final Set<String> dictionaryTokens = {};
+
   int _allocSite({
     required int offset,
     required String kind,
@@ -707,6 +711,152 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     }
     super.visitBinaryExpression(node);
   }
+
+  @override
+  void visitSimpleStringLiteral(SimpleStringLiteral node) {
+    final val = node.value;
+    if (_isInsideRegExpCall(node) || _looksLikeRegexSyntax(val)) {
+      _harvestRegExpTokens(val);
+    } else if (_isCandidateDictString(val) &&
+        !_isDirectiveOrErrorLiteral(node) &&
+        !_isInsideLargeLiteralCollection(node)) {
+      owner.dictionaryTokens.add(val);
+    }
+    super.visitSimpleStringLiteral(node);
+  }
+
+  @override
+  void visitIntegerLiteral(IntegerLiteral node) {
+    final val = node.value;
+    if (val != null &&
+        _isPrintableOrWhitespaceAscii(val) &&
+        _isComparisonOrSwitchLiteral(node)) {
+      owner.dictionaryTokens.add(String.fromCharCode(val));
+    }
+    super.visitIntegerLiteral(node);
+  }
+
+  void _harvestRegExpTokens(String pattern) {
+    if (pattern.contains(r'\d')) owner.dictionaryTokens.add('0');
+    if (pattern.contains(r'\r\n')) owner.dictionaryTokens.add('\r\n');
+    for (final rawBranch in pattern.split('|')) {
+      if (_plainRegexBranch.hasMatch(rawBranch) &&
+          _isCandidateDictString(rawBranch)) {
+        owner.dictionaryTokens.add(rawBranch);
+      }
+    }
+  }
+
+  static final RegExp _plainRegexBranch = RegExp(r'^[A-Za-z0-9_ ,:;/-]+$');
+  static final RegExp _regexMetaFragments = RegExp(
+    r'\(\?:|\[[a-zA-Z0-9^]|\\[dsSwWbB]',
+  );
+
+  static bool _looksLikeRegexSyntax(String val) =>
+      _regexMetaFragments.hasMatch(val);
+
+  static bool _isCandidateDictString(String val) =>
+      val.isNotEmpty && val.length <= 24 && ' '.allMatches(val).length <= 1;
+
+  static bool _isPrintableOrWhitespaceAscii(int v) =>
+      (v >= 0x20 && v <= 0x7E) || v == 0x09 || v == 0x0A || v == 0x0D;
+
+  static bool _isComparisonOrSwitchLiteral(AstNode node) =>
+      switch (node.parent) {
+        BinaryExpression(:final operator) =>
+          _operatorHelper(operator.type) != null,
+        SwitchCase() || ConstantPattern() || RelationalPattern() => true,
+        _ => false,
+      };
+
+  static bool _isInsideRegExpCall(AstNode node) {
+    final parent = node.parent;
+    if (parent is! ArgumentList) return false;
+    return switch (parent.parent) {
+      MethodInvocation(:final methodName) => methodName.name == 'RegExp',
+      InstanceCreationExpression(:final constructorName) =>
+        constructorName.type.name.lexeme == 'RegExp',
+      _ => false,
+    };
+  }
+
+  static bool _isInsideLargeLiteralCollection(AstNode node) {
+    for (var cur = node.parent; cur != null; cur = cur.parent) {
+      if (cur is SetOrMapLiteral && cur.elements.length > 32) return true;
+      if (cur is ListLiteral && cur.elements.length > 32) return true;
+    }
+    return false;
+  }
+
+  static bool _isDirectiveOrErrorLiteral(AstNode node) {
+    for (var cur = node.parent; cur != null; cur = cur.parent) {
+      if (_isExcludedAstContainer(cur)) return true;
+    }
+    return false;
+  }
+
+  static bool _isExcludedAstContainer(AstNode cur) => switch (cur) {
+    Directive() ||
+    Annotation() ||
+    AssertStatement() ||
+    ThrowExpression() ||
+    EnumConstantArguments() => true,
+    InstanceCreationExpression(:final constructorName) => _isExcludedTypeName(
+      constructorName.type.name.lexeme,
+    ),
+    MethodInvocation(:final methodName) => _isExcludedMethodName(
+      methodName.name,
+    ),
+    _ => _isErrorNamedArgument(cur),
+  };
+
+  static bool _isErrorNamedArgument(AstNode cur) {
+    if (cur.parent is! ArgumentList) return false;
+    final tok = cur.beginToken;
+    return tok.next?.lexeme == ':' &&
+        (tok.lexeme == 'name' || tok.lexeme == 'message');
+  }
+
+  static bool _isExcludedTypeName(String name) =>
+      name == 'StateError' ||
+      name.endsWith('Exception') ||
+      name.endsWith('Error');
+
+  static bool _isExcludedMethodName(String name) {
+    final lower = name.toLowerCase();
+    return lower.contains('error') ||
+        lower.contains('exception') ||
+        lower.contains('fail') ||
+        lower.contains('warn');
+  }
+}
+
+/// Formats [tokens] as an AFL / `libFuzzer` dictionary (`"escaped_token"` per
+/// line).
+String formatFuzzDictionary(Iterable<String> tokens) {
+  final sorted = tokens.where((t) => t.isNotEmpty).toSet().toList()..sort();
+  final sb = StringBuffer();
+  for (final token in sorted) {
+    sb
+      ..write('"')
+      ..write(_escapeDictionaryToken(utf8.encode(token)))
+      ..writeln('"');
+  }
+  return sb.toString();
+}
+
+String _escapeDictionaryToken(List<int> bytes) {
+  final sb = StringBuffer();
+  for (final b in bytes) {
+    if (b >= 0x20 && b <= 0x7E && b != 0x22 && b != 0x5C) {
+      sb.writeCharCode(b);
+    } else {
+      sb
+        ..write(r'\x')
+        ..write(b.toRadixString(16).padLeft(2, '0'));
+    }
+  }
+  return sb.toString();
 }
 
 class _FlowSensitiveFinder extends GeneralizingAstVisitor<void> {
@@ -749,11 +899,13 @@ typedef OverlayResult = ({
   String packageName,
   String overlayPackageConfigPath,
   String edgeManifestPath,
+  String dictionaryPath,
   String instrumentedLibDir,
   int filesInstrumented,
   int edgesInserted,
   int comparesInserted,
   int switchesInserted,
+  int dictionaryTokensExtracted,
 });
 
 /// Builds a non-destructive AST-instrumented copy of a target package's `lib/`
@@ -829,6 +981,10 @@ class PackageOverlayInstrumentor {
       sites: instrumentor.sites,
     );
 
+    final dictionaryPath = p.join(fuzzDir, 'auto.dict');
+    File(dictionaryPath)
+        .writeAsStringSync(formatFuzzDictionary(instrumentor.dictionaryTokens));
+
     final overlayConfigPath = await _writeOverlayPackageConfig(
       rootDir: rootDir,
       packageName: packageName,
@@ -840,11 +996,13 @@ class PackageOverlayInstrumentor {
       packageName: packageName,
       overlayPackageConfigPath: overlayConfigPath,
       edgeManifestPath: edgeManifestPath,
+      dictionaryPath: dictionaryPath,
       instrumentedLibDir: instrumentedLibDir,
       filesInstrumented: filesInstrumented,
       edgesInserted: instrumentor.edgesInserted,
       comparesInserted: instrumentor.comparesInserted,
       switchesInserted: instrumentor.switchesInserted,
+      dictionaryTokensExtracted: instrumentor.dictionaryTokens.length,
     );
   }
 

@@ -25,12 +25,27 @@ on:
       max-len:
         description: 'Maximum input length in bytes (-max_len=<N>)'
         type: number
-        default: 64
+        default: 4096
         required: false
       max-total-time:
         description: 'Maximum total fuzzing time in seconds (-max_total_time=<S>)'
         type: number
         default: 60
+        required: false
+      instrument-packages:
+        description: 'Comma-separated dependency packages to AST-instrument (e.g. yaml,source_span)'
+        type: string
+        default: ''
+        required: false
+      work-dir:
+        description: 'Directory for instrumented overlay and coverage artifacts'
+        type: string
+        default: '.dart_tool/fuzz'
+        required: false
+      dict:
+        description: 'Optional path to an AFL/libFuzzer dictionary file'
+        type: string
+        default: ''
         required: false
       sdk:
         description: 'Dart SDK channel (stable, beta, dev, main)'
@@ -65,7 +80,7 @@ jobs:
 
       - name: Install clang and LLVM compiler-rt
         if: ${{ inputs.mode == 'cgf' }}
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
+        run: sudo apt-get update && sudo apt-get install -y clang llvm libclang-rt-dev
 
       - name: Resolve target package dependencies
         working-directory: ${{ inputs.package-root }}
@@ -87,11 +102,36 @@ jobs:
           FUZZ_RUNS: ${{ inputs.runs }}
           FUZZ_MAX_LEN: ${{ inputs.max-len }}
           FUZZ_MAX_TOTAL_TIME: ${{ inputs.max-total-time }}
+          FUZZ_INSTRUMENT_PACKAGES: ${{ inputs.instrument-packages }}
+          FUZZ_WORK_DIR: ${{ inputs.work-dir }}
+          FUZZ_DICT: ${{ inputs.dict }}
         run: |
+          EXTRA_ARGS=()
+          if [ -n "$FUZZ_INSTRUMENT_PACKAGES" ]; then
+            EXTRA_ARGS+=(--instrument-packages="$FUZZ_INSTRUMENT_PACKAGES")
+          fi
+          if [ -n "$FUZZ_WORK_DIR" ]; then
+            EXTRA_ARGS+=(--work-dir="$FUZZ_WORK_DIR")
+          fi
+          if [ -n "$FUZZ_DICT" ]; then
+            EXTRA_ARGS+=(--dict="$FUZZ_DICT")
+          fi
           dart pub global run fuzz run \
             --package-root=. \
             --target="$FUZZ_TARGET" \
             --mode="$FUZZ_MODE" \
             --runs="$FUZZ_RUNS" \
             --max-len="$FUZZ_MAX_LEN" \
-            --max-total-time="$FUZZ_MAX_TOTAL_TIME"
+            --max-total-time="$FUZZ_MAX_TOTAL_TIME" \
+            "${EXTRA_ARGS[@]}"
+
+      - name: Upload crash reproducers and coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-${{ strategy.job-index }}
+          if-no-files-found: ignore
+          path: |
+            ${{ inputs.package-root }}/crash-*
+            ${{ inputs.package-root }}/${{ inputs.work-dir }}/crash-*
+            ${{ inputs.package-root }}/${{ inputs.work-dir }}/coverage_report.json

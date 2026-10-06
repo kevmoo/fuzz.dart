@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="doc/fuzzy_dash.webp" width="320" alt="Fuzzy Dash mascot">
+</p>
+
 Coverage-guided `libFuzzer` + `dart:ffi` AST instrumentor and pure-Dart parser
 fuzzing combinators for Dart packages.
 
@@ -6,10 +10,11 @@ fuzzing combinators for Dart packages.
 1. **Coverage-Guided AST Fuzzing (`fuzz run`, `--mode=cgf` default)**:
    Automatically rewrites the target package's `lib/` directory into a
    non-destructive `.dart_tool/fuzz/` AST overlay (leaving your working tree
-   untouched), compiles a native LLVM `libFuzzer` bridge (`fuzzer.cc`) with
-   `clang++`, and drives in-process `LLVMFuzzerRunDriver` callbacks over
-   `dart:ffi` at **~60,000–105,000 executions/sec**—evolving inputs from an
-   empty 0-byte seed.
+   untouched), harvests string and byte-token literals into an automatic
+   `libFuzzer` dictionary (`.dart_tool/fuzz/auto.dict`), compiles a native LLVM
+   `libFuzzer` bridge (`fuzzer.cc`) with `clang++`, and drives in-process
+   `LLVMFuzzerRunDriver` callbacks over `dart:ffi` at **~60,000–105,000
+   executions/sec**—evolving inputs from an empty 0-byte seed.
 2. **Pure-Dart Property Oracles & Fallback Engine (`--mode=pure-dart`)**:
    Provides zero-FFI test combinators for streaming chunk-split equivalence
    (`verifyChunkSplitEquivalence`), guarded `StreamTransformer` error-contract
@@ -61,10 +66,12 @@ void main(List<String> args) {
 # Run coverage-guided libFuzzer (requires clang++ with compiler-rt):
 dart run fuzz run --package-root=. --target=test/fuzz/my_fuzz.dart
 
-# Instrument delegated dependency packages (e.g. front_matter -> package:yaml)
-# and isolate parallel runs with --work-dir:
+# Instrument delegated dependency packages (e.g. front_matter -> package:yaml),
+# supply a custom AFL/libFuzzer dictionary (merged with auto.dict), and isolate
+# parallel runs with --work-dir:
 dart run fuzz run --package-root=. --instrument-packages=yaml,source_span \
-  --work-dir=.dart_tool/fuzz/my_fuzz --target=test/fuzz/my_fuzz.dart
+  --dict=test/fuzz/yaml.dict --work-dir=.dart_tool/fuzz/my_fuzz \
+  --target=test/fuzz/my_fuzz.dart
 
 # Run for 30 seconds in CI and emit coverage_report.json:
 dart run fuzz run --package-root=. --target=test/fuzz/my_fuzz.dart -- -max_total_time=30

@@ -191,6 +191,28 @@ void main(List<String> args) {
       expect(exactRes.exitCode, equals(77), reason: '${exactRes.stderr}');
       expect(File(exactPath).existsSync(), isTrue);
     });
+
+    test('loads -dict=<path> tokens in Pure-Dart mode and discovers '
+        'multi-byte magic sequence', () {
+      final dictFile = File('${d.sandbox}/custom.dict')
+        ..writeAsStringSync('# comment line\nkw1="<<FUZZ_DICT_MAGIC>>"\n');
+      var matchedMagic = false;
+      FuzzRuntime.runDriver(
+        (Uint8List data) {
+          final str = String.fromCharCodes(data);
+          if (str.contains('<<FUZZ_DICT_MAGIC>>')) {
+            matchedMagic = true;
+            $fuzzEdge(500);
+          } else {
+            $fuzzEdge(1);
+          }
+          return 0;
+        },
+        mode: FuzzMode.pureDart,
+        fuzzerArgs: ['-runs=80', '-seed=7', '-dict=${dictFile.path}'],
+      );
+      expect(matchedMagic, isTrue);
+    });
   });
 
   group('FuzzRuntime (Native CGF Mode)', () {

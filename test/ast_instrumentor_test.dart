@@ -724,6 +724,64 @@ void main() {
           .toSet();
       expect(siteFiles, contains('lib/host_pkg.dart'));
       expect(siteFiles, contains('package:dep_pkg/lib/dep_pkg.dart'));
+      expect(res.dictionaryTokensExtracted, greaterThanOrEqualTo(1));
+      expect(File(res.dictionaryPath).existsSync(), isTrue);
+      expect(File(res.dictionaryPath).readAsStringSync(), contains('"YAML"'));
     });
+
+    test(
+      'harvests AST string literals, RegExp alternations, and ASCII char '
+      'constants while excluding directives, >32 lookup tables, and errors',
+      () {
+        final largeTableEntries = List.generate(
+          40,
+          (i) => "'emoji_$i': 'VAL_$i'",
+        ).join(', ');
+        final sample =
+            '''
+import 'dart:convert';
+
+final _weekdayRe = RegExp(r'Mon|Tue|Wed');
+final _digitsRe = RegExp(r'\\d+\\r\\n');
+const _hugeTable = <String, String>{$largeTableEntries};
+
+int parseHeader(String line, int byte) {
+  if (line == '<<MAGIC>>' || line == 'A\\r\\nB') return 1;
+  if (byte == 0x25) return 2;
+  wrapFormatException('HTTP date', line);
+  throw const FormatException('Do not put this error prose in dict');
+}
+
+void wrapFormatException(String label, String input) {}
+''';
+        final instrumentor = AstInstrumentor()..instrumentSource(sample);
+        expect(
+          instrumentor.dictionaryTokens,
+          containsAll([
+            '<<MAGIC>>',
+            'A\r\nB',
+            '%',
+            'Mon',
+            'Tue',
+            'Wed',
+            '0',
+            '\r\n',
+          ]),
+        );
+        expect(instrumentor.dictionaryTokens, isNot(contains('dart:convert')));
+        expect(instrumentor.dictionaryTokens, isNot(contains('HTTP date')));
+        expect(instrumentor.dictionaryTokens, isNot(contains('emoji_0')));
+        expect(instrumentor.dictionaryTokens, isNot(contains(r'\d+\r\n')));
+        expect(
+          instrumentor.dictionaryTokens,
+          isNot(contains('Do not put this error prose in dict')),
+        );
+
+        final formatted = formatFuzzDictionary(instrumentor.dictionaryTokens);
+        expect(formatted, contains('"<<MAGIC>>"'));
+        expect(formatted, contains(r'"A\x0d\x0aB"'));
+        expect(formatted, contains('"%"'));
+      },
+    );
   });
 }
