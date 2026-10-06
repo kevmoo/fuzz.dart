@@ -724,6 +724,36 @@ void main() {
           .toSet();
       expect(siteFiles, contains('lib/host_pkg.dart'));
       expect(siteFiles, contains('package:dep_pkg/lib/dep_pkg.dart'));
+      expect(res.dictionaryTokensExtracted, greaterThanOrEqualTo(1));
+      expect(File(res.dictionaryPath).existsSync(), isTrue);
+      expect(File(res.dictionaryPath).readAsStringSync(), contains('"YAML"'));
+    });
+
+    test('harvests AST string literals and printable ASCII char constants into '
+        'dictionaryTokens while excluding directives and throw messages', () {
+      const sample = r'''
+import 'dart:convert';
+
+int parseHeader(String line, int byte) {
+  if (line == '<<MAGIC>>' || line == 'A\r\nB') return 1;
+  if (byte == 0x25) return 2;
+  throw const FormatException('Do not put this error prose in dict');
+}
+''';
+      final instrumentor = AstInstrumentor()..instrumentSource(sample);
+      expect(instrumentor.dictionaryTokens, contains('<<MAGIC>>'));
+      expect(instrumentor.dictionaryTokens, contains('A\r\nB'));
+      expect(instrumentor.dictionaryTokens, contains('%'));
+      expect(instrumentor.dictionaryTokens, isNot(contains('dart:convert')));
+      expect(
+        instrumentor.dictionaryTokens,
+        isNot(contains('Do not put this error prose in dict')),
+      );
+
+      final formatted = formatFuzzDictionary(instrumentor.dictionaryTokens);
+      expect(formatted, contains('"<<MAGIC>>"'));
+      expect(formatted, contains(r'"A\x0d\x0aB"'));
+      expect(formatted, contains('"%"'));
     });
   });
 }

@@ -104,7 +104,8 @@ class _InstrumentCommand extends Command<int> {
       'Instrumented package:${res.packageName} '
       '(${res.filesInstrumented} files -> ${res.instrumentedLibDir}; '
       'edges: ${res.edgesInserted}, compares: ${res.comparesInserted}, '
-      'switches: ${res.switchesInserted})\n'
+      'switches: ${res.switchesInserted}, '
+      'dict tokens: ${res.dictionaryTokensExtracted})\n'
       'Overlay config: ${res.overlayPackageConfigPath}',
     );
     return 0;
@@ -142,6 +143,18 @@ class _RunCommand extends Command<int> {
         help:
             'Additional dependency packages from package_config.json to '
             'AST-instrument (e.g. yaml,source_span).',
+      )
+      ..addOption(
+        'dict',
+        help:
+            'Optional path to an AFL/libFuzzer dictionary file (-dict=<path>).',
+      )
+      ..addFlag(
+        'auto-dict',
+        help:
+            'Automatically seed the fuzzer dictionary with string/char '
+            'literals harvested from the instrumented AST.',
+        defaultsTo: true,
       )
       ..addOption(
         'mode',
@@ -190,18 +203,12 @@ class _RunCommand extends Command<int> {
         ? p.normalize(p.absolute(rawWorkDir))
         : p.join(pkgRoot, '.dart_tool', 'fuzz');
     final additionalPackages = opts['instrument-packages'] as List<String>;
-    final rawTarget = opts['target'] as String;
-    var targetPath = p.normalize(p.absolute(rawTarget));
-    if (!File(targetPath).existsSync()) {
-      final pkgRelative = p.normalize(p.join(pkgRoot, rawTarget));
-      if (File(pkgRelative).existsSync()) {
-        targetPath = pkgRelative;
-      } else {
-        usageException('Target script not found: $targetPath');
-      }
-    }
+    final targetPath = _resolveFileInPackage(
+      pkgRoot,
+      opts['target'] as String,
+      label: 'Target script',
+    );
     final modeStr = opts['mode'] as String;
-    final isPureDart = modeStr == 'pure-dart';
 
     final overlay = await PackageOverlayInstrumentor.instrumentPackage(
       packageRoot: pkgRoot,
@@ -212,7 +219,8 @@ class _RunCommand extends Command<int> {
       'Prepared AST overlay for package:${overlay.packageName} '
       '(${overlay.filesInstrumented} files, ${overlay.edgesInserted} edges, '
       '${overlay.comparesInserted} compares, '
-      '${overlay.switchesInserted} switches).',
+      '${overlay.switchesInserted} switches, '
+      '${overlay.dictionaryTokensExtracted} dict tokens).',
     );
 
     final siteHitsPath = p.join(fuzzDir, 'site_hits.bin');
@@ -221,12 +229,17 @@ class _RunCommand extends Command<int> {
       siteHitsFile.deleteSync();
     }
 
-    String? libPath;
-    if (!isPureDart) {
-      libPath = await NativeFuzzerBuilder.buildSharedLibrary(
-        outputDir: fuzzDir,
-      );
-    }
+    final libPath = modeStr == 'pure-dart'
+        ? null
+        : await NativeFuzzerBuilder.buildSharedLibrary(outputDir: fuzzDir);
+    final resolvedDictPath = _resolveDictionaryPath(
+      pkgRoot: pkgRoot,
+      fuzzDir: fuzzDir,
+      userDict: opts['dict'] as String?,
+      autoDict: opts['auto-dict'] as bool,
+      autoDictPath: overlay.dictionaryPath,
+      autoTokensCount: overlay.dictionaryTokensExtracted,
+    );
 
     final heapLimitMb = opts['heap-limit-mb'] as String;
     final fuzzerFlags = <String>[
@@ -237,6 +250,7 @@ class _RunCommand extends Command<int> {
       '-timeout=${opts['timeout']}',
       if ((opts['max-total-time'] as String) != '0')
         '-max_total_time=${opts['max-total-time']}',
+      if (resolvedDictPath != null) '-dict=$resolvedDictPath',
       ...opts.rest,
     ];
 
@@ -268,6 +282,44 @@ class _RunCommand extends Command<int> {
       siteHitsFile: siteHitsFile,
     );
     return code;
+  }
+
+  String _resolveFileInPackage(
+    String pkgRoot,
+    String rawPath, {
+    required String label,
+  }) {
+    final absPath = p.normalize(p.absolute(rawPath));
+    if (File(absPath).existsSync()) return absPath;
+    final pkgRelative = p.normalize(p.join(pkgRoot, rawPath));
+    if (File(pkgRelative).existsSync()) return pkgRelative;
+    usageException('$label not found: $absPath');
+  }
+
+  String? _resolveDictionaryPath({
+    required String pkgRoot,
+    required String fuzzDir,
+    required String? userDict,
+    required bool autoDict,
+    required String autoDictPath,
+    required int autoTokensCount,
+  }) {
+    final hasAuto =
+        autoDict && autoTokensCount > 0 && File(autoDictPath).existsSync();
+    if (userDict == null || userDict.isEmpty) {
+      return hasAuto ? autoDictPath : null;
+    }
+    final userDictFile = _resolveFileInPackage(
+      pkgRoot,
+      userDict,
+      label: 'Dictionary file',
+    );
+    if (!hasAuto) return userDictFile;
+    final mergedPath = p.join(fuzzDir, 'merged.dict');
+    final userContent = File(userDictFile).readAsStringSync();
+    final autoContent = File(autoDictPath).readAsStringSync();
+    File(mergedPath).writeAsStringSync('$userContent\n$autoContent');
+    return mergedPath;
   }
 
   static void _emitCoverageSummary({

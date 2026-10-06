@@ -376,10 +376,11 @@ class FuzzRuntime {
     int Function(Uint8List data) target, {
     required List<String> fuzzerArgs,
   }) {
-    final (:runs, :maxLen, :maxTotalTime, :seed, :corpusPaths) =
+    final (:runs, :maxLen, :maxTotalTime, :seed, :dictPath, :corpusPaths) =
         _parsePureDartFlags(fuzzerArgs);
     final rng = Random(seed);
     final globalMaxMap = Uint8List(numCounters);
+    final dictTokens = _loadDictionaryFile(dictPath);
     final (:corpus, :persistDir) = _initPureDartCorpus(corpusPaths);
     final initialCorpusLen = corpus.length;
     final stopwatch = Stopwatch()..start();
@@ -403,6 +404,7 @@ class FuzzRuntime {
               corpus[rng.nextInt(corpus.length)],
               rng,
               maxLen,
+              dictTokens,
             );
       _resetPerInputState();
       final copy = Uint8List.fromList(mutated);
@@ -475,11 +477,65 @@ class FuzzRuntime {
     return seeds;
   }
 
+  static List<Uint8List> _loadDictionaryFile(String? dictPath) {
+    if (dictPath == null || dictPath.isEmpty) return const [];
+    final file = File(dictPath);
+    if (!file.existsSync()) return const [];
+    final entries = <Uint8List>[];
+    for (final rawLine in file.readAsLinesSync()) {
+      final parsed = _parseDictionaryLine(rawLine.trim());
+      if (parsed != null && parsed.isNotEmpty) {
+        entries.add(parsed);
+      }
+    }
+    return entries;
+  }
+
+  static Uint8List? _parseDictionaryLine(String line) {
+    if (line.isEmpty || line.startsWith('#')) return null;
+    final firstQuote = line.indexOf('"');
+    final lastQuote = line.lastIndexOf('"');
+    if (firstQuote < 0 || lastQuote <= firstQuote) return null;
+    return _unescapeDictionaryBody(line.substring(firstQuote + 1, lastQuote));
+  }
+
+  static Uint8List _unescapeDictionaryBody(String body) {
+    final out = <int>[];
+    var i = 0;
+    while (i < body.length) {
+      if (body.codeUnitAt(i) == 0x5C && i + 1 < body.length) {
+        final next = body.codeUnitAt(i + 1);
+        if (next == 0x78 && i + 3 < body.length) {
+          final hexVal = int.tryParse(body.substring(i + 2, i + 4), radix: 16);
+          if (hexVal != null) {
+            out.add(hexVal);
+            i += 4;
+            continue;
+          }
+        }
+        out.add(_unescapeSingleChar(next));
+        i += 2;
+      } else {
+        out.add(body.codeUnitAt(i));
+        i++;
+      }
+    }
+    return Uint8List.fromList(out);
+  }
+
+  static int _unescapeSingleChar(int ch) => switch (ch) {
+    0x6E => 0x0A,
+    0x72 => 0x0D,
+    0x74 => 0x09,
+    _ => ch,
+  };
+
   static ({
     int runs,
     int maxLen,
     int maxTotalTime,
     int seed,
+    String? dictPath,
     List<String> corpusPaths,
   })
   _parsePureDartFlags(List<String> args) {
@@ -487,6 +543,7 @@ class FuzzRuntime {
     var maxLen = 4096;
     var maxTotalTime = 0;
     var seed = 0;
+    String? dictPath;
     final corpusPaths = <String>[];
     for (final arg in args) {
       if (arg.startsWith('-runs=')) {
@@ -499,6 +556,8 @@ class FuzzRuntime {
             maxTotalTime;
       } else if (arg.startsWith('-seed=')) {
         seed = int.tryParse(arg.substring('-seed='.length)) ?? seed;
+      } else if (arg.startsWith('-dict=')) {
+        dictPath = arg.substring('-dict='.length);
       } else if (!arg.startsWith('-')) {
         corpusPaths.add(arg);
       }
@@ -511,6 +570,7 @@ class FuzzRuntime {
       maxLen: maxLen,
       maxTotalTime: maxTotalTime,
       seed: resolvedSeed,
+      dictPath: dictPath,
       corpusPaths: corpusPaths,
     );
   }
@@ -545,17 +605,23 @@ class FuzzRuntime {
     Uint8List base,
     Random rng,
     int maxLen,
+    List<Uint8List> dictTokens,
   ) {
     final list = base.toList();
     final steps = rng.nextInt(4) + 1;
     for (var s = 0; s < steps; s++) {
-      _applySingleMutation(list, rng, maxLen);
+      _applySingleMutation(list, rng, maxLen, dictTokens);
     }
     return Uint8List.fromList(list);
   }
 
-  static void _applySingleMutation(List<int> list, Random rng, int maxLen) {
-    final op = rng.nextInt(6);
+  static void _applySingleMutation(
+    List<int> list,
+    Random rng,
+    int maxLen,
+    List<Uint8List> dictTokens,
+  ) {
+    final op = rng.nextInt(dictTokens.isEmpty ? 6 : 7);
     if (op == 0 && list.length < maxLen) {
       final pos = list.isEmpty ? 0 : rng.nextInt(list.length + 1);
       list.insert(pos, rng.nextInt(256));
@@ -573,7 +639,7 @@ class FuzzRuntime {
       final val = rng.nextBool() ? _torcIntsA[idx] : _torcIntsB[idx];
       final bd = ByteData(8)..setInt64(0, val, Endian.little);
       _writeBytesAtOffset(list, bd.buffer.asUint8List(), rng, maxLen);
-    } else {
+    } else if (op == 5) {
       final hex =
           fuzzBoundaryHexStrings[rng.nextInt(fuzzBoundaryHexStrings.length)];
       _writeBytesAtOffset(
@@ -582,6 +648,9 @@ class FuzzRuntime {
         rng,
         maxLen,
       );
+    } else if (dictTokens.isNotEmpty) {
+      final token = dictTokens[rng.nextInt(dictTokens.length)];
+      _writeBytesAtOffset(list, token, rng, maxLen);
     }
   }
 

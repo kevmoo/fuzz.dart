@@ -3,6 +3,10 @@ description: Coverage-guided libFuzzer + dart:ffi AST instrumentor and pure-Dart
 version: 0.1.0-wip
 repository: https://github.com/kevmoo/fuzz.dart
 
+screenshots:
+  - description: 'Fuzzy Dash — coverage-guided parser fuzzing for Dart'
+    path: doc/fuzzy_dash.webp
+
 environment:
   sdk: ^3.13.0
 
