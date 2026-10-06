@@ -615,5 +615,115 @@ void main() {
       ]);
       expect(formatCoverageTable(report), contains('lib/sample_pkg.dart'));
     });
+
+    test('instruments additionalPackages from package_config.json and isolates '
+        'custom workDir without collision', () async {
+      await d.dir('workspace', [
+        d.dir('dep_pkg', [
+          d.file('pubspec.yaml', '''
+name: dep_pkg
+environment:
+  sdk: ^3.7.0
+'''),
+          d.dir('lib', [
+            d.file('dep_pkg.dart', '''
+int parseDelegated(String input) {
+  if (input == 'YAML') return 42;
+  return 0;
+}
+'''),
+          ]),
+        ]),
+        d.dir('host_pkg', [
+          d.file('pubspec.yaml', '''
+name: host_pkg
+environment:
+  sdk: ^3.7.0
+'''),
+          d.dir('.dart_tool', [
+            d.file(
+              'package_config.json',
+              jsonEncode({
+                'configVersion': 2,
+                'packages': [
+                  {
+                    'name': 'host_pkg',
+                    'rootUri': '../',
+                    'packageUri': 'lib/',
+                    'languageVersion': '3.7',
+                  },
+                  {
+                    'name': 'dep_pkg',
+                    'rootUri': '../../dep_pkg',
+                    'packageUri': 'lib/',
+                    'languageVersion': '3.7',
+                  },
+                ],
+              }),
+            ),
+          ]),
+          d.dir('lib', [
+            d.file('host_pkg.dart', '''
+import 'package:dep_pkg/dep_pkg.dart';
+
+int parseHost(String s) {
+  if (s.isEmpty) return -1;
+  return parseDelegated(s);
+}
+'''),
+          ]),
+          d.dir('test', [
+            d.file('delegate_target.dart', '''
+import 'package:host_pkg/host_pkg.dart';
+
+void main() {
+  if (parseHost('YAML') != 42) throw StateError('unexpected');
+}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final hostRoot = p.join(d.sandbox, 'workspace', 'host_pkg');
+      final customWorkDir = p.join(d.sandbox, 'custom_work_dir');
+
+      final res = await PackageOverlayInstrumentor.instrumentPackage(
+        packageRoot: hostRoot,
+        workDir: customWorkDir,
+        additionalPackages: const ['dep_pkg'],
+      );
+
+      // Both host_pkg (1 file) and dep_pkg (1 file) must be instrumented.
+      expect(res.filesInstrumented, equals(2));
+      expect(
+        res.overlayPackageConfigPath,
+        equals(p.join(customWorkDir, 'package_config.json')),
+      );
+
+      // Default .dart_tool/fuzz directory inside host_pkg must not be created
+      // when custom workDir is used.
+      expect(
+        Directory(p.join(hostRoot, '.dart_tool', 'fuzz')).existsSync(),
+        isFalse,
+      );
+
+      // Verify the child Dart VM resolves both instrumented packages and runs.
+      final vmRes = await Process.run(Platform.resolvedExecutable, [
+        '--packages=${res.overlayPackageConfigPath}',
+        p.join(hostRoot, 'test', 'delegate_target.dart'),
+      ], workingDirectory: hostRoot);
+      expect(vmRes.exitCode, equals(0), reason: '${vmRes.stderr}');
+
+      // Verify edge_manifest.json includes sites for both host_pkg and dep_pkg.
+      final manifestMap = jsonDecode(
+        File(res.edgeManifestPath).readAsStringSync(),
+      ) as Map<String, Object?>;
+      final siteFiles =
+          ((manifestMap['sites'] as List<Object?>).cast<Map<String, Object?>>())
+              .map((s) => s['file'] as String)
+              .toSet();
+      expect(siteFiles, contains('lib/host_pkg.dart'));
+      expect(siteFiles, contains('package:dep_pkg/lib/dep_pkg.dart'));
+    });
   });
 }

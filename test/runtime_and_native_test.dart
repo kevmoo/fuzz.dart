@@ -1,6 +1,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:fuzz/fuzz.dart';
@@ -90,6 +91,105 @@ void main() {
       );
       expect(foundRhsMagic, isTrue);
       expect(foundLhsMagic, isTrue);
+    });
+
+    test('respects -seed, persists new inputs to corpus dir, and omits '
+        'unconditional hex boundary seeds', () {
+      final corpusDir = d.dir('pure_corpus');
+      final corpusPath = '${d.sandbox}/pure_corpus';
+      Directory(corpusPath).createSync(recursive: true);
+
+      final seenRun1 = <List<int>>[];
+      FuzzRuntime.runDriver(
+        (Uint8List data) {
+          seenRun1.add(data.toList());
+          $fuzzEdge(data.isEmpty ? 1 : (data.first + 2));
+          return 0;
+        },
+        mode: FuzzMode.pureDart,
+        fuzzerArgs: ['-runs=15', '-seed=42', corpusPath],
+      );
+
+      // First input in an empty corpus must be the 0-byte seed, without
+      // injecting CRLF hex strings when no seed files exist.
+      expect(seenRun1.first, isEmpty);
+      expect(
+        seenRun1.map(String.fromCharCodes),
+        isNot(contains('7fffffffffffffff\r\n')),
+      );
+
+      // Newly discovered coverage-increasing inputs must be persisted to
+      // corpusPath.
+      final persistedFiles = Directory(corpusPath)
+          .listSync()
+          .whereType<File>()
+          .toList();
+      expect(persistedFiles, isNotEmpty);
+
+      // Re-running with the same -seed against a fresh directory must explore
+      // the exact same sequence of inputs.
+      final corpusPath2 = '${d.sandbox}/pure_corpus_2';
+      Directory(corpusPath2).createSync(recursive: true);
+      final seenRun2 = <List<int>>[];
+      FuzzRuntime.runDriver(
+        (Uint8List data) {
+          seenRun2.add(data.toList());
+          $fuzzEdge(data.isEmpty ? 1 : (data.first + 2));
+          return 0;
+        },
+        mode: FuzzMode.pureDart,
+        fuzzerArgs: ['-runs=15', '-seed=42', corpusPath2],
+      );
+      expect(seenRun2, equals(seenRun1));
+      expect(corpusDir.name, equals('pure_corpus'));
+    });
+
+    test('writes crash-<hash> reproducer file on unhandled exception with '
+        '-artifact_prefix and -exact_artifact_path', () async {
+      final scriptFile = File('${d.sandbox}/crash_harness.dart')
+        ..writeAsStringSync('''
+import 'dart:typed_data';
+import 'package:fuzz/fuzz.dart';
+
+void main(List<String> args) {
+  FuzzRuntime.runDriver(
+    (Uint8List data) {
+      throw StateError('synthetic parser crash');
+    },
+    mode: FuzzMode.pureDart,
+    fuzzerArgs: args,
+  );
+}
+''');
+
+      final pkgConfig =
+          '${Directory.current.path}/.dart_tool/package_config.json';
+      final artifactsDir = Directory('${d.sandbox}/artifacts')
+        ..createSync(recursive: true);
+      final prefixRes = await Process.run(Platform.resolvedExecutable, [
+        '--packages=$pkgConfig',
+        scriptFile.path,
+        '-runs=5',
+        '-artifact_prefix=${artifactsDir.path}/',
+      ]);
+      expect(prefixRes.exitCode, equals(77), reason: '${prefixRes.stderr}');
+      expect(prefixRes.stderr as String, contains('Test unit written to'));
+      final writtenFiles = artifactsDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.contains('crash-'))
+          .toList();
+      expect(writtenFiles, hasLength(1));
+
+      final exactPath = '${d.sandbox}/artifacts/exact_repro.bin';
+      final exactRes = await Process.run(Platform.resolvedExecutable, [
+        '--packages=$pkgConfig',
+        scriptFile.path,
+        '-runs=5',
+        '-exact_artifact_path=$exactPath',
+      ]);
+      expect(exactRes.exitCode, equals(77), reason: '${exactRes.stderr}');
+      expect(File(exactPath).existsSync(), isTrue);
     });
   });
 

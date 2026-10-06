@@ -757,14 +757,19 @@ typedef OverlayResult = ({
 });
 
 /// Builds a non-destructive AST-instrumented copy of a target package's `lib/`
-/// directory inside `.dart_tool/fuzz/instrumented/lib/` and writes an
-/// overlay `.dart_tool/fuzz/package_config.json`.
+/// directory (plus any requested [additionalPackages]) inside
+/// `<workDir>/instrumented/` and writes an overlay
+/// `<workDir>/package_config.json`.
 class PackageOverlayInstrumentor {
-  /// Instruments `<packageRoot>/lib` into `<packageRoot>/.dart_tool/fuzz/`
-  /// without modifying any tracked files in [packageRoot].
+  /// Instruments `<packageRoot>/lib` (and any [additionalPackages] from
+  /// `package_config.json`) into [workDir] (defaulting to
+  /// `<packageRoot>/.dart_tool/fuzz/`) without modifying any tracked files in
+  /// [packageRoot].
   static Future<OverlayResult> instrumentPackage({
     required String packageRoot,
     String runtimeImport = 'package:fuzz/fuzz.dart',
+    String? workDir,
+    List<String> additionalPackages = const [],
   }) async {
     final rootDir = p.normalize(p.absolute(packageRoot));
     final pubspecFile = File(p.join(rootDir, 'pubspec.yaml'));
@@ -778,22 +783,46 @@ class PackageOverlayInstrumentor {
       throw ArgumentError('No lib/ directory found in $rootDir');
     }
 
-    final fuzzDir = p.join(rootDir, '.dart_tool', 'fuzz');
+    final fuzzDir = workDir != null && workDir.isNotEmpty
+        ? p.normalize(p.absolute(workDir))
+        : p.join(rootDir, '.dart_tool', 'fuzz');
     final instrumentedRoot = p.join(fuzzDir, 'instrumented');
     final instrumentedLibDir = p.join(instrumentedRoot, 'lib');
-    final outDir = Directory(instrumentedLibDir);
-    if (outDir.existsSync()) {
-      outDir.deleteSync(recursive: true);
+    final rootOutDir = Directory(instrumentedRoot);
+    if (rootOutDir.existsSync()) {
+      rootOutDir.deleteSync(recursive: true);
     }
-    outDir.createSync(recursive: true);
+    Directory(instrumentedLibDir).createSync(recursive: true);
 
     final instrumentor = AstInstrumentor();
-    final filesInstrumented = _instrumentDirectoryTree(
+    var filesInstrumented = _instrumentDirectoryTree(
       sourceLibDir: sourceLibDir,
       instrumentedLibDir: instrumentedLibDir,
       instrumentor: instrumentor,
       runtimeImport: runtimeImport,
+      filePrefix: 'lib',
     );
+
+    final pkgConfigFile = _findPackageConfigFile(rootDir);
+    final rawJson =
+        jsonDecode(pkgConfigFile.readAsStringSync()) as Map<String, Object?>;
+    final configDir = p.dirname(pkgConfigFile.path);
+    final packages = (rawJson['packages'] as List<Object?>)
+        .cast<Map<String, Object?>>();
+
+    for (final depName in additionalPackages) {
+      if (depName.isEmpty || depName == packageName) continue;
+      final depLibDir = _resolveDependencyLibDir(packages, depName, configDir);
+      final depOutLibDir = p.join(instrumentedRoot, depName, 'lib');
+      Directory(depOutLibDir).createSync(recursive: true);
+      filesInstrumented += _instrumentDirectoryTree(
+        sourceLibDir: depLibDir,
+        instrumentedLibDir: depOutLibDir,
+        instrumentor: instrumentor,
+        runtimeImport: runtimeImport,
+        filePrefix: 'package:$depName/lib',
+      );
+    }
 
     final edgeManifestPath = _writeEdgeManifest(
       fuzzDir: fuzzDir,
@@ -805,6 +834,7 @@ class PackageOverlayInstrumentor {
       rootDir: rootDir,
       packageName: packageName,
       fuzzDir: fuzzDir,
+      additionalPackages: additionalPackages.toSet(),
     );
 
     return (
@@ -816,6 +846,32 @@ class PackageOverlayInstrumentor {
       edgesInserted: instrumentor.edgesInserted,
       comparesInserted: instrumentor.comparesInserted,
       switchesInserted: instrumentor.switchesInserted,
+    );
+  }
+
+  static Directory _resolveDependencyLibDir(
+    List<Map<String, Object?>> packages,
+    String depName,
+    String configDir,
+  ) {
+    for (final entry in packages) {
+      if (entry['name'] != depName) continue;
+      final absEntry = _absolutizePackageEntry(entry, configDir);
+      final pkgRootPath = p.fromUri(Uri.parse(absEntry['rootUri'] as String));
+      final pkgUriStr = (absEntry['packageUri'] as String?) ?? 'lib/';
+      final libDir = Directory(
+        p.normalize(p.join(pkgRootPath, p.fromUri(Uri.parse(pkgUriStr)))),
+      );
+      if (!libDir.existsSync()) {
+        throw ArgumentError(
+          'Dependency package "$depName" lib directory not found: '
+          '${libDir.path}',
+        );
+      }
+      return libDir;
+    }
+    throw ArgumentError(
+      'Dependency package "$depName" not found in package_config.json.',
     );
   }
 
@@ -860,6 +916,7 @@ class PackageOverlayInstrumentor {
     required String instrumentedLibDir,
     required AstInstrumentor instrumentor,
     required String runtimeImport,
+    String filePrefix = 'lib',
   }) {
     final files =
         sourceLibDir.listSync(recursive: true).whereType<File>().toList()
@@ -871,7 +928,7 @@ class PackageOverlayInstrumentor {
       Directory(p.dirname(destPath)).createSync(recursive: true);
       if (relPath.endsWith('.dart')) {
         final source = entity.readAsStringSync();
-        final posixRel = p.posix.joinAll(['lib', ...p.split(relPath)]);
+        final posixRel = p.posix.joinAll([filePrefix, ...p.split(relPath)]);
         final out = instrumentor.instrumentSource(
           source,
           runtimeImport: runtimeImport,
@@ -890,6 +947,7 @@ class PackageOverlayInstrumentor {
     required String rootDir,
     required String packageName,
     required String fuzzDir,
+    required Set<String> additionalPackages,
   }) async {
     final pkgConfigFile = _findPackageConfigFile(rootDir);
     final rawJson =
@@ -897,6 +955,7 @@ class PackageOverlayInstrumentor {
     final configDir = p.dirname(pkgConfigFile.path);
     final packages = (rawJson['packages'] as List<Object?>)
         .cast<Map<String, Object?>>();
+    final instrumentedRoot = p.join(fuzzDir, 'instrumented');
 
     final updatedPackages = <Map<String, Object?>>[];
     var hasFuzz = false;
@@ -905,10 +964,14 @@ class PackageOverlayInstrumentor {
       final name = entry['name'] as String;
       if (name == 'fuzz') hasFuzz = true;
       if (name == packageName) {
+        updatedPackages.add(
+          _buildRootPackageEntry(entry, rootDir, instrumentedRoot),
+        );
+      } else if (additionalPackages.contains(name)) {
         updatedPackages.add({
           ...entry,
-          'rootUri': p.toUri(rootDir).toString(),
-          'packageUri': '.dart_tool/fuzz/instrumented/lib/',
+          'rootUri': p.toUri(p.join(instrumentedRoot, name)).toString(),
+          'packageUri': 'lib/',
         });
       } else {
         updatedPackages.add(_absolutizePackageEntry(entry, configDir));
@@ -921,7 +984,7 @@ class PackageOverlayInstrumentor {
         'name': 'fuzz',
         'rootUri': p.toUri(fuzzRoot).toString(),
         'packageUri': 'lib/',
-        'languageVersion': '3.13',
+        'languageVersion': _resolveFuzzLanguageVersion(fuzzRoot),
       });
     }
 
@@ -934,6 +997,40 @@ class PackageOverlayInstrumentor {
       overlayConfigPath,
     ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(overlayMap));
     return overlayConfigPath;
+  }
+
+  static Map<String, Object?> _buildRootPackageEntry(
+    Map<String, Object?> entry,
+    String rootDir,
+    String instrumentedRoot,
+  ) {
+    final instrumentedLibDir = p.join(instrumentedRoot, 'lib');
+    if (p.isWithin(rootDir, instrumentedLibDir)) {
+      final relPosix = p.posix.joinAll(
+        p.split(p.relative(instrumentedLibDir, from: rootDir)),
+      );
+      return {
+        ...entry,
+        'rootUri': p.toUri(rootDir).toString(),
+        'packageUri': '$relPosix/',
+      };
+    }
+    return {
+      ...entry,
+      'rootUri': p.toUri(instrumentedRoot).toString(),
+      'packageUri': 'lib/',
+    };
+  }
+
+  static String _resolveFuzzLanguageVersion(String fuzzRoot) {
+    final pubspec = File(p.join(fuzzRoot, 'pubspec.yaml'));
+    if (pubspec.existsSync()) {
+      final match = RegExp(r'sdk:\s*["\x27]?(?:\^|>=)?(\d+\.\d+)')
+          .firstMatch(pubspec.readAsStringSync());
+      if (match != null) return match.group(1)!;
+    }
+    final vmMatch = RegExp(r'^(\d+\.\d+)').firstMatch(Platform.version);
+    return vmMatch?.group(1) ?? '3.7';
   }
 
   static File _findPackageConfigFile(String startDir) {
