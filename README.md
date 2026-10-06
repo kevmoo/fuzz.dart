@@ -42,21 +42,16 @@ fuzzing combinators for Dart packages.
 
 ```dart
 import 'dart:typed_data';
-import 'package:fuzz/fuzz.dart';
 import 'package:my_pkg/my_pkg.dart';
 
-void main(List<String> args) {
-  FuzzRuntime.runDriver(
-    (Uint8List data) {
-      try {
-        parseMyFormat(data);
-      } on FormatException {
-        // Expected rejection on malformed input.
-      }
-      return 0;
-    },
-    fuzzerArgs: args,
-  );
+// Zero-dependency target (no `package:fuzz` import needed in pubspec.yaml;
+// `fuzz run` synthesizes `.dart_tool/fuzz/fuzz_entrypoint.dart` automatically):
+void fuzzTarget(Uint8List data) {
+  try {
+    parseMyFormat(data);
+  } on FormatException {
+    // Expected rejection on malformed input.
+  }
 }
 ```
 
@@ -79,6 +74,13 @@ dart run fuzz run --package-root=. --target=test/fuzz/my_fuzz.dart -- -max_total
 # Run in pure-Dart mode (no clang++ required):
 dart run fuzz run --mode=pure-dart --package-root=. --target=test/fuzz/my_fuzz.dart
 ```
+
+### Continuous Fuzzing in GitHub Actions
+
+Use the reusable workflow (`kevmoo/fuzz.dart/.github/workflows/fuzz.yaml@main`)
+to run coverage-guided fuzzing in CI without adding `package:fuzz` to your
+package's `pubspec.yaml`. See [`doc/github_action.md`](doc/github_action.md) for
+setup instructions, workflow inputs, and multi-package examples.
 
 ## Why Uniform Random Bytes Fail ("The Rejection Wall")
 
