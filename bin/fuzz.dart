@@ -257,13 +257,17 @@ class _RunCommand extends Command<int> {
     final dartBin =
         dartExecutable ??
         (throw StateError('Could not locate the `dart` executable.'));
+    final entrypointPath = _prepareRunnerEntrypoint(
+      targetPath: targetPath,
+      fuzzDir: fuzzDir,
+    );
     final proc = await Process.start(
       dartBin,
       [
         '--enable-asserts',
         '--old_gen_heap_size=$heapLimitMb',
         '--packages=${overlay.overlayPackageConfigPath}',
-        targetPath,
+        entrypointPath,
         ...fuzzerFlags,
       ],
       workingDirectory: pkgRoot,
@@ -282,6 +286,34 @@ class _RunCommand extends Command<int> {
       siteHitsFile: siteHitsFile,
     );
     return code;
+  }
+
+  static String _prepareRunnerEntrypoint({
+    required String targetPath,
+    required String fuzzDir,
+  }) {
+    final targetSource = File(targetPath).readAsStringSync();
+    if (targetSource.contains('FuzzRuntime.runDriver')) {
+      return targetPath;
+    }
+    final wrapperPath = p.join(fuzzDir, 'fuzz_entrypoint.dart');
+    final targetUri = p.toUri(targetPath);
+    File(wrapperPath).writeAsStringSync('''
+import 'dart:typed_data';
+import 'package:fuzz/fuzz.dart';
+import '$targetUri' as target;
+
+void main(List<String> args) {
+  FuzzRuntime.runDriver(
+    (Uint8List data) {
+      target.fuzzTarget(data);
+      return 0;
+    },
+    fuzzerArgs: args,
+  );
+}
+''');
+    return wrapperPath;
   }
 
   String _resolveFileInPackage(
