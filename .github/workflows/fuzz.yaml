@@ -136,4 +136,5 @@ jobs:
             ${{ inputs.package-root }}/crash-*
             ${{ inputs.package-root }}/${{ inputs.work-dir }}/crash-*
             ${{ inputs.package-root }}/${{ inputs.work-dir }}/crashes/crash-*
+            ${{ inputs.package-root }}/${{ inputs.work-dir }}/crashes_report.json
             ${{ inputs.package-root }}/${{ inputs.work-dir }}/coverage_report.json

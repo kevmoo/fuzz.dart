@@ -6,6 +6,7 @@ import 'package:args/args.dart';
 import 'package:args/command_runner.dart';
 import 'package:cli_util/cli_util.dart';
 import 'package:fuzz/src/coverage_report.dart';
+import 'package:fuzz/src/crash_deduplicator.dart';
 import 'package:fuzz/src/instrument_ast.dart';
 import 'package:fuzz/src/native_builder.dart';
 import 'package:path/path.dart' as p;
@@ -159,6 +160,13 @@ class _RunCommand extends Command<int> {
             'literals harvested from the instrumented AST.',
         defaultsTo: true,
       )
+      ..addFlag(
+        'keep-going',
+        help:
+            'Continue fuzzing after unhandled Dart exceptions, deduplicating '
+            'crashes by stack signature and minimizing each reproducer.',
+        defaultsTo: true,
+      )
       ..addOption(
         'mode',
         help: 'Fuzzing execution mode.',
@@ -233,9 +241,9 @@ class _RunCommand extends Command<int> {
 
     final siteHitsPath = p.join(fuzzDir, 'site_hits.bin');
     final siteHitsFile = File(siteHitsPath);
-    if (siteHitsFile.existsSync()) {
-      siteHitsFile.deleteSync();
-    }
+    final crashesReportPath = p.join(fuzzDir, 'crashes_report.json');
+    _deleteIfExists(siteHitsFile);
+    _deleteIfExists(File(crashesReportPath));
 
     final libPath = modeStr == 'pure-dart'
         ? null
@@ -274,7 +282,10 @@ class _RunCommand extends Command<int> {
       environment: {
         ...Platform.environment,
         'FUZZ_MODE': modeStr,
+        'FUZZ_KEEP_GOING': (opts['keep-going'] as bool) ? '1' : '0',
+        'FUZZ_TARGET_PACKAGE': overlay.packageName,
         'FUZZ_SITE_HITS_PATH': siteHitsPath,
+        'FUZZ_CRASHES_REPORT_PATH': crashesReportPath,
         'FUZZ_LIB_PATH': ?libPath,
       },
       mode: ProcessStartMode.inheritStdio,
@@ -285,7 +296,13 @@ class _RunCommand extends Command<int> {
       edgeManifestPath: overlay.edgeManifestPath,
       siteHitsFile: siteHitsFile,
     );
-    return code;
+    return _resolveExitCode(code, File(crashesReportPath));
+  }
+
+  static void _deleteIfExists(File file) {
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
   }
 
   List<String> _prepareFuzzerFlags({
@@ -306,10 +323,11 @@ class _RunCommand extends Command<int> {
       for (final arg in restArgs)
         arg.startsWith('-') ? arg : _resolvePositionalArg(pkgRoot, arg),
     ];
+    final effectiveRuns = _resolveEffectiveRuns(opts, resolvedRestArgs);
     final maxTotalTime = opts['max-total-time'] as String;
     return <String>[
       '-use_value_profile=1',
-      '-runs=${opts['runs']}',
+      '-runs=$effectiveRuns',
       '-max_len=${opts['max-len']}',
       '-rss_limit_mb=${opts['rss-limit-mb']}',
       '-timeout=${opts['timeout']}',
@@ -318,6 +336,25 @@ class _RunCommand extends Command<int> {
       if (!hasExplicitArtifactFlag) '-artifact_prefix=$crashesDir/',
       ...resolvedRestArgs,
     ];
+  }
+
+  static String _resolveEffectiveRuns(
+    ArgResults opts,
+    List<String> resolvedRestArgs,
+  ) {
+    final explicitRuns = opts['runs'] as String;
+    if (opts.wasParsed('runs')) return explicitRuns;
+    final positionalPaths = [
+      for (final arg in resolvedRestArgs)
+        if (!arg.startsWith('-')) arg,
+    ];
+    if (positionalPaths.isNotEmpty &&
+        positionalPaths.every(
+          (p) => FileSystemEntity.typeSync(p) == FileSystemEntityType.file,
+        )) {
+      return '1';
+    }
+    return explicitRuns;
   }
 
   static const _reproducerPrefixes = [
@@ -433,5 +470,17 @@ void main(List<String> args) {
     stdout
       ..write(formatCoverageTable(report))
       ..writeln('Coverage report written to: $reportJsonPath');
+  }
+
+  static int _resolveExitCode(int code, File crashesReportFile) {
+    if (!crashesReportFile.existsSync()) return code;
+    final summary = formatCrashSummaryFromJson(
+      crashesReportFile.readAsStringSync(),
+    );
+    if (summary.isEmpty) return code;
+    stderr
+      ..write(summary)
+      ..writeln('Crash report written to: ${crashesReportFile.path}');
+    return code != 0 ? code : 77;
   }
 }

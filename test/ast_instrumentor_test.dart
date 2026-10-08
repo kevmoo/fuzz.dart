@@ -1080,5 +1080,201 @@ void fuzzTarget(Uint8List bytes) {
         isFalse,
       );
     });
+
+    test('fuzz run deduplicates multiple crashes in-process, minimizes '
+        'shortest input, and writes crashes_report.json', () async {
+      await d.dir('multi_crash_pkg', [
+        d.file('pubspec.yaml', 'name: multi_crash_pkg\n'),
+        d.dir('.dart_tool', [
+          d.file(
+            'package_config.json',
+            jsonEncode({
+              'configVersion': 2,
+              'packages': [
+                {
+                  'name': 'multi_crash_pkg',
+                  'rootUri': '../',
+                  'packageUri': 'lib/',
+                  'languageVersion': '3.7',
+                },
+              ],
+            }),
+          ),
+        ]),
+        d.dir('lib', [
+          d.file('multi_crash_pkg.dart', '''
+import 'dart:typed_data';
+
+void parseMulti(Uint8List bytes) {
+  if (bytes.isEmpty) return;
+  if (bytes[0] == 0x41) {
+    throw StateError('bug A');
+  }
+  if (bytes[0] == 0x42) {
+    throw RangeError('bug B');
+  }
+}
+'''),
+        ]),
+        d.dir('corpus', [
+          d.file('01_a_long', 'A_LONG_PAYLOAD'),
+          d.file('02_a_short', 'A'),
+          d.file('03_b', 'B_PAYLOAD'),
+        ]),
+        d.dir('test', [
+          d.dir('fuzz', [
+            d.file('multi_fuzz.dart', '''
+import 'dart:typed_data';
+import 'package:multi_crash_pkg/multi_crash_pkg.dart';
+
+void fuzzTarget(Uint8List bytes) {
+  parseMulti(bytes);
+}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final pkgRoot = p.join(d.sandbox, 'multi_crash_pkg');
+      final fuzzBin = p.join(Directory.current.path, 'bin', 'fuzz.dart');
+
+      final keepGoingRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--mode=pure-dart',
+        '--runs=3',
+        'test/fuzz/multi_fuzz.dart',
+        'corpus',
+      ]);
+      expect(
+        keepGoingRes.exitCode,
+        equals(77),
+        reason: '${keepGoingRes.stderr}',
+      );
+      expect(
+        keepGoingRes.stderr.toString(),
+        contains('DEDUPLICATED CRASH SUMMARY (2 unique crash(es)'),
+      );
+      expect(
+        keepGoingRes.stderr.toString(),
+        contains('[MINIMIZED CRASH #1] (14B -> 1B)'),
+      );
+
+      final reportFile = File(
+        p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes_report.json'),
+      );
+      expect(reportFile.existsSync(), isTrue);
+      final reportJson =
+          jsonDecode(reportFile.readAsStringSync()) as Map<String, Object?>;
+      expect(reportJson['package'], equals('multi_crash_pkg'));
+      expect(reportJson['totalUniqueCrashes'], equals(2));
+      expect(reportJson['totalCrashHits'], equals(3));
+      final crashes = (reportJson['crashes'] as List<Object?>)
+          .cast<Map<String, Object?>>();
+      expect(crashes[0]['errorType'], equals('StateError'));
+      expect(crashes[0]['shortestInputLength'], equals(1));
+      expect(crashes[0]['shortestInputDartLiteral'], equals("r'A'"));
+      expect(crashes[1]['errorType'], equals('RangeError'));
+
+      // Replaying a single crash file without --runs defaults to 1 iteration.
+      final firstCrashPath = crashes[0]['artifactPath'] as String;
+      final replayRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--mode=pure-dart',
+        'test/fuzz/multi_fuzz.dart',
+        firstCrashPath,
+      ]);
+      expect(replayRes.exitCode, equals(77), reason: '${replayRes.stderr}');
+      final replayReport =
+          jsonDecode(reportFile.readAsStringSync()) as Map<String, Object?>;
+      expect(replayReport['totalUniqueCrashes'], equals(1));
+      expect(replayReport['totalCrashHits'], equals(1));
+    });
+
+    test(
+      'fuzz run --no-keep-going stops immediately on the first crash',
+      () async {
+        await d.dir('fail_fast_pkg', [
+          d.file('pubspec.yaml', 'name: fail_fast_pkg\n'),
+          d.dir('.dart_tool', [
+            d.file(
+              'package_config.json',
+              jsonEncode({
+                'configVersion': 2,
+                'packages': [
+                  {
+                    'name': 'fail_fast_pkg',
+                    'rootUri': '../',
+                    'packageUri': 'lib/',
+                    'languageVersion': '3.7',
+                  },
+                ],
+              }),
+            ),
+          ]),
+          d.dir('lib', [
+            d.file('fail_fast_pkg.dart', '''
+import 'dart:typed_data';
+
+void parseMulti(Uint8List bytes) {
+  if (bytes.isEmpty) return;
+  if (bytes[0] == 0x41) throw StateError('bug A');
+  if (bytes[0] == 0x42) throw RangeError('bug B');
+}
+'''),
+          ]),
+          d.dir('corpus', [
+            d.file('01_a', 'A_PAYLOAD'),
+            d.file('02_b', 'B_PAYLOAD'),
+          ]),
+          d.dir('test', [
+            d.dir('fuzz', [
+              d.file('multi_fuzz.dart', '''
+import 'dart:typed_data';
+import 'package:fail_fast_pkg/fail_fast_pkg.dart';
+
+void fuzzTarget(Uint8List bytes) {
+  parseMulti(bytes);
+}
+'''),
+            ]),
+          ]),
+        ]).create();
+
+        final pkgRoot = p.join(d.sandbox, 'fail_fast_pkg');
+        final fuzzBin = p.join(Directory.current.path, 'bin', 'fuzz.dart');
+        final failFastRes = await Process.run(Platform.resolvedExecutable, [
+          fuzzBin,
+          'run',
+          '--package-root=$pkgRoot',
+          '--mode=pure-dart',
+          '--no-keep-going',
+          '--runs=2',
+          'test/fuzz/multi_fuzz.dart',
+          'corpus',
+        ]);
+        expect(
+          failFastRes.exitCode,
+          equals(77),
+          reason: '${failFastRes.stderr}',
+        );
+        expect(
+          failFastRes.stderr.toString(),
+          contains('UNHANDLED EXCEPTION IN FUZZ TARGET!'),
+        );
+        final crashesDir = Directory(
+          p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes'),
+        );
+        expect(crashesDir.listSync().whereType<File>(), hasLength(1));
+        expect(
+          File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes_report.json'))
+              .existsSync(),
+          isFalse,
+        );
+      },
+    );
   });
 }

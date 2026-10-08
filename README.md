@@ -69,7 +69,10 @@ dart run fuzz run --package-root=. --instrument-packages=yaml,source_span \
   test/fuzz/my_fuzz.dart
 
 # Run for 30 seconds in CI and emit coverage_report.json:
-dart run fuzz run test/fuzz/my_fuzz.dart -- -max_total_time=30
+dart run fuzz run --max-total-time=30 test/fuzz/my_fuzz.dart
+
+# Replay a specific crash reproducer file (automatically runs 1 iteration):
+dart run fuzz run test/fuzz/my_fuzz.dart .dart_tool/fuzz/crashes/crash-<hash>
 
 # Run in pure-Dart mode (no clang++ required):
 dart run fuzz run --mode=pure-dart test/fuzz/my_fuzz.dart
@@ -185,11 +188,16 @@ In a memory-safe language like Dart, parser bugs rarely manifest as native
 segmentation faults. Instead, harnesses combine `fuzz` input generation with
 four semantic contracts exported by `package:fuzz/fuzz.dart`:
 
-1. **Strict Exception Contract**: A parser should only reject malformed input
-   via its documented domain exception (such as `FormatException`). Catch
-   expected syntax errors in your harness callback; any unhandled `RangeError`,
-   `TypeError`, `StateError`, `ConcurrentModificationError`, or `AssertionError`
-   terminates the run and prints a minimal crash reproducer.
+1. **Strict Exception Contract (`--keep-going` Multi-Crash Deduplication)**: A
+   parser should only reject malformed input via its documented domain exception
+   (such as `FormatException`). Catch expected syntax errors in your harness
+   callback; any unhandled `RangeError`, `TypeError`, `StateError`,
+   `ConcurrentModificationError`, or `AssertionError` is deduplicated in-process
+   by stack signature, minimized to its shortest reproducer in
+   `.dart_tool/fuzz/crashes/`, summarized in
+   `.dart_tool/fuzz/crashes_report.json` with copy-pasteable Dart literals, and
+   exits with code `77` (pass `--no-keep-going` for immediate fail-fast exit on
+   the first crash).
 2. **Streaming Chunk-Split Equivalence (`verifyChunkSplitEquivalence`)**: Slices
    an input buffer into deterministic random chunks (including 0-byte and 1-byte
    cuts across multi-byte tokens) and asserts that chunked conversion
