@@ -118,12 +118,12 @@ jobs:
           fi
           dart pub global run fuzz run \
             --package-root=. \
-            --target="$FUZZ_TARGET" \
             --mode="$FUZZ_MODE" \
             --runs="$FUZZ_RUNS" \
             --max-len="$FUZZ_MAX_LEN" \
             --max-total-time="$FUZZ_MAX_TOTAL_TIME" \
-            "${EXTRA_ARGS[@]}"
+            "${EXTRA_ARGS[@]}" \
+            "$FUZZ_TARGET"
 
       - name: Upload crash reproducers and coverage report
         if: always()
@@ -135,4 +135,5 @@ jobs:
           path: |
             ${{ inputs.package-root }}/crash-*
             ${{ inputs.package-root }}/${{ inputs.work-dir }}/crash-*
+            ${{ inputs.package-root }}/${{ inputs.work-dir }}/crashes/crash-*
             ${{ inputs.package-root }}/${{ inputs.work-dir }}/coverage_report.json

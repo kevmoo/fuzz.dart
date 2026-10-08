@@ -123,13 +123,13 @@ class _RunCommand extends Command<int> {
   String get description =>
       'Instruments the target package and runs a fuzz target harness.';
 
+  @override
+  String get invocation =>
+      '${runner!.executableName} $name [arguments] <target.dart> '
+      '[corpus_or_fuzzer_args...]';
+
   _RunCommand() {
     argParser
-      ..addOption(
-        'target',
-        help: 'Path to the Dart fuzz harness script.',
-        mandatory: true,
-      )
       ..addOption(
         'package-root',
         help: 'Target package directory whose lib/ will be instrumented.',
@@ -200,6 +200,12 @@ class _RunCommand extends Command<int> {
   @override
   Future<int> run() async {
     final opts = argResults!;
+    if (opts.rest.isEmpty || opts.rest.first.startsWith('-')) {
+      usageException('Missing required positional argument: <target.dart>.');
+    }
+    final rawTarget = opts.rest.first;
+    final restArgs = opts.rest.sublist(1);
+
     final pkgRoot = p.normalize(p.absolute(opts['package-root'] as String));
     final rawWorkDir = opts['work-dir'] as String?;
     final fuzzDir = rawWorkDir != null && rawWorkDir.isNotEmpty
@@ -208,7 +214,7 @@ class _RunCommand extends Command<int> {
     final additionalPackages = opts['instrument-packages'] as List<String>;
     final targetPath = _resolveFileInPackage(
       pkgRoot,
-      opts['target'] as String,
+      rawTarget,
       label: 'Target script',
     );
     final modeStr = opts['mode'] as String;
@@ -241,6 +247,22 @@ class _RunCommand extends Command<int> {
       opts,
     );
 
+    final crashesDir = p.join(fuzzDir, 'crashes');
+    Directory(crashesDir).createSync(recursive: true);
+    final hasExplicitArtifactFlag = restArgs.any(
+      (a) =>
+          a.startsWith('-artifact_prefix=') ||
+          a.startsWith('-exact_artifact_path='),
+    );
+    for (final arg in restArgs) {
+      if (arg.startsWith('-')) continue;
+      final candidate = p.isAbsolute(arg) ? arg : p.join(pkgRoot, arg);
+      if (FileSystemEntity.typeSync(candidate) ==
+          FileSystemEntityType.notFound) {
+        Directory(candidate).createSync(recursive: true);
+      }
+    }
+
     final heapLimitMb = opts['heap-limit-mb'] as String;
     final fuzzerFlags = <String>[
       '-use_value_profile=1',
@@ -251,7 +273,8 @@ class _RunCommand extends Command<int> {
       if ((opts['max-total-time'] as String) != '0')
         '-max_total_time=${opts['max-total-time']}',
       if (resolvedDictPath != null) '-dict=$resolvedDictPath',
-      ...opts.rest,
+      if (!hasExplicitArtifactFlag) '-artifact_prefix=$crashesDir/',
+      ...restArgs,
     ];
 
     final dartBin =

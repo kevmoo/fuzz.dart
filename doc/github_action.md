@@ -154,6 +154,6 @@ When a CI run fails and uploads a `crash-<sha1>` artifact:
 # Re-run against the single crash reproducer file:
 dart pub global run fuzz run \
   --package-root=. \
-  --target=test/fuzz/my_parser_fuzz.dart \
-  -- crash-<sha1>
+  test/fuzz/my_parser_fuzz.dart \
+  crash-<sha1>
 ```
