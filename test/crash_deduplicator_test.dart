@@ -153,6 +153,25 @@ void main() {
         formatDartInputLiteral(Uint8List.fromList([0xFF, 0x00, 0x41])),
         equals('Uint8List.fromList([0xff, 0x00, 0x41])'),
       );
+      // UTF-16 surrogate pair ('😀' = 2 code units) must not be split on
+      // maxPreviewBytes truncation.
+      expect(
+        formatDartInputLiteral(
+          Uint8List.fromList(utf8.encode('ab😀cd')),
+          maxPreviewBytes: 3,
+        ),
+        equals("r'ab...'"),
+      );
+      // C1 control characters (e.g. U+009B CSI) and U+2028 line separator fall
+      // back to unambiguous byte literals.
+      expect(
+        formatDartInputLiteral(Uint8List.fromList(utf8.encode('a\u009bb'))),
+        equals('Uint8List.fromList([0x61, 0xc2, 0x9b, 0x62])'),
+      );
+      expect(
+        formatDartInputLiteral(Uint8List.fromList(utf8.encode('a\u2028b'))),
+        equals('Uint8List.fromList([0x61, 0xe2, 0x80, 0xa8, 0x62])'),
+      );
     });
 
     test('fromFuzzerArgs disables keepGoing on -exact_artifact_path=, '

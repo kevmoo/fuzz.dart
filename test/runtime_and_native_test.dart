@@ -257,5 +257,60 @@ void main(List<String> args) {
       FuzzRuntime.init(mode: FuzzMode.cgf, libraryPath: libPath);
       expect(identical($fuzzSiteHits, nativeSiteHitsRef), isTrue);
     });
+
+    test('exits with code 77 and prints DEDUPLICATED CRASH SUMMARY when '
+        'FuzzRuntime.runDriver is called directly in FuzzMode.cgf', () async {
+      final clang = NativeFuzzerBuilder.findClangExecutable();
+      if (clang == null) {
+        markTestSkipped('clang++ not installed on this runner');
+        return;
+      }
+
+      final libPath = await NativeFuzzerBuilder.buildSharedLibrary(
+        outputDir: d.sandbox,
+        clangExecutable: clang,
+      );
+      final artifactsDir = Directory('${d.sandbox}/cgf_crashes')
+        ..createSync(recursive: true);
+      final scriptFile = File('${d.sandbox}/cgf_crash_harness.dart')
+        ..writeAsStringSync('''
+import 'dart:typed_data';
+import 'package:fuzz/fuzz.dart';
+
+void main(List<String> args) {
+  FuzzRuntime.runDriver(
+    (Uint8List data) {
+      if (data.isEmpty) {
+        throw StateError('empty input crash');
+      }
+      throw ArgumentError('non-empty input crash');
+    },
+    mode: FuzzMode.cgf,
+    libraryPath: r'$libPath',
+    fuzzerArgs: args,
+  );
+}
+''');
+
+      final pkgConfig =
+          '${Directory.current.path}/.dart_tool/package_config.json';
+      final result = await Process.run(Platform.resolvedExecutable, [
+        '--packages=$pkgConfig',
+        scriptFile.path,
+        '-runs=10',
+        '-artifact_prefix=${artifactsDir.path}/',
+      ]);
+      expect(result.exitCode, equals(77), reason: '${result.stderr}');
+      final stderrStr = result.stderr as String;
+      expect(stderrStr, contains('DEDUPLICATED CRASH SUMMARY'));
+      expect(stderrStr, contains('StateError'));
+      expect(stderrStr, contains('ArgumentError'));
+      final crashFiles = artifactsDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.contains('crash-'))
+          .toList();
+      expect(crashFiles, hasLength(2));
+    });
   });
 }

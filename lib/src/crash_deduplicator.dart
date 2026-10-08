@@ -21,9 +21,7 @@ String fnv1a64Hex(Uint8List data) {
 String formatDartInputLiteral(Uint8List data, {int? maxPreviewBytes}) {
   final text = _tryDecodePrintableUtf8(data);
   if (text != null) {
-    final truncated = maxPreviewBytes != null && text.length > maxPreviewBytes
-        ? '${text.substring(0, maxPreviewBytes)}...'
-        : text;
+    final truncated = _truncateUtf16Safe(text, maxPreviewBytes);
     if (truncated.isEmpty) return "''";
     if (!_needsEscapingForRawSingleQuote(truncated)) return "r'$truncated'";
     return "'${_escapeDartSingleQuoted(truncated)}'";
@@ -39,6 +37,15 @@ String formatDartInputLiteral(Uint8List data, {int? maxPreviewBytes}) {
   return 'Uint8List.fromList([$hexItems])';
 }
 
+String _truncateUtf16Safe(String text, int? maxPreviewBytes) {
+  if (maxPreviewBytes == null || text.length <= maxPreviewBytes) return text;
+  var cut = maxPreviewBytes;
+  if (cut > 0 && (text.codeUnitAt(cut - 1) & 0xFC00) == 0xD800) {
+    cut--;
+  }
+  return '${text.substring(0, cut)}...';
+}
+
 String? _tryDecodePrintableUtf8(Uint8List data) {
   final String decoded;
   try {
@@ -47,12 +54,19 @@ String? _tryDecodePrintableUtf8(Uint8List data) {
     return null;
   }
   for (final rune in decoded.runes) {
-    final isAllowedWhitespace = rune == 0x09 || rune == 0x0A || rune == 0x0D;
-    if ((rune < 0x20 && !isAllowedWhitespace) || rune == 0x7F) {
-      return null;
-    }
+    if (_isDisallowedTextRune(rune)) return null;
   }
   return decoded;
+}
+
+bool _isDisallowedTextRune(int rune) {
+  if (rune < 0x20) {
+    return rune != 0x09 && rune != 0x0A && rune != 0x0D;
+  }
+  return (rune >= 0x7F && rune <= 0x9F) ||
+      rune == 0x2028 ||
+      rune == 0x2029 ||
+      rune == 0xFEFF;
 }
 
 bool _needsEscapingForRawSingleQuote(String s) {
