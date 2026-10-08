@@ -1384,8 +1384,7 @@ int checkValue(int v) {
 
         // 5. Editing an existing file in lib/ (even if mtime moves backward!)
         // invalidates cache (`cached: false`).
-        final libFile = File(p.join(pkgRoot, 'lib', 'cached_pkg.dart'));
-        libFile
+        File(p.join(pkgRoot, 'lib', 'cached_pkg.dart'))
           ..writeAsStringSync('''
 int checkValue(int v) {
   if (v == 42 || v == 99) return 1;
