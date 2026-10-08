@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'combinators.dart';
+import 'crash_deduplicator.dart';
 
 typedef _AllocateCountersC = Pointer<Uint8> Function(Size size);
 typedef _AllocateCountersDart = Pointer<Uint8> Function(int size);
@@ -255,11 +256,25 @@ abstract final class FuzzRuntime {
   }) {
     final resolvedMode = mode ?? _resolveModeFromEnv();
     init(mode: resolvedMode, libraryPath: libraryPath);
+    final deduplicator = CrashDeduplicator.fromFuzzerArgs(fuzzerArgs);
     try {
-      if (resolvedMode == FuzzMode.pureDart) {
-        return _runPureDartDriver(target, fuzzerArgs: fuzzerArgs);
+      final code = resolvedMode == FuzzMode.pureDart
+          ? _runPureDartDriver(
+              target,
+              fuzzerArgs: fuzzerArgs,
+              deduplicator: deduplicator,
+            )
+          : _runNativeDriver(
+              target,
+              fuzzerArgs: fuzzerArgs,
+              deduplicator: deduplicator,
+            );
+      if (deduplicator.hasCrashes) {
+        _finalizeCrashReport(deduplicator);
+        flushSiteHits();
+        exit(77);
       }
-      return _runNativeDriver(target, fuzzerArgs: fuzzerArgs);
+      return code;
     } finally {
       flushSiteHits();
     }
@@ -268,6 +283,7 @@ abstract final class FuzzRuntime {
   static int _runNativeDriver(
     int Function(Uint8List data) target, {
     required List<String> fuzzerArgs,
+    required CrashDeduplicator deduplicator,
   }) {
     final allocate = _allocate!;
     final startFuzzer = _startFuzzerWithArgs!;
@@ -277,12 +293,7 @@ abstract final class FuzzRuntime {
       // Copy input bytes out of libFuzzer's scratch buffer so retained slices
       // never point to freed or overwritten native memory.
       final copy = Uint8List.fromList(data.asTypedList(size));
-      try {
-        return target(copy);
-      } on Object catch (e, st) {
-        flushSiteHits();
-        _reportUnhandledCrash(copy, e, st, fuzzerArgs: fuzzerArgs);
-      }
+      return _invokeTarget(target, copy, deduplicator);
     }
 
     final callable = NativeCallable<DartFuzzCallbackC>.isolateLocal(
@@ -306,13 +317,73 @@ abstract final class FuzzRuntime {
     }
   }
 
+  static int _invokeTarget(
+    int Function(Uint8List data) target,
+    Uint8List copy,
+    CrashDeduplicator deduplicator,
+  ) {
+    try {
+      return target(copy);
+    } on Object catch (e, st) {
+      _covMap.fillRange(0, numCounters, 0);
+      flushSiteHits();
+      if (!deduplicator.keepGoing) {
+        _reportUnhandledCrash(copy, e, st, deduplicator);
+      }
+      _recordKeepGoingCrash(copy, e, st, deduplicator);
+      return -1;
+    }
+  }
+
+  static void _recordKeepGoingCrash(
+    Uint8List copy,
+    Object error,
+    StackTrace st,
+    CrashDeduplicator deduplicator,
+  ) {
+    final (:record, :isNew, :isMinimized, :previousLength) = deduplicator
+        .recordCrash(copy, error, st);
+    if (isNew || isMinimized) {
+      final preview = formatDartInputLiteral(copy, maxPreviewBytes: 64);
+      final prefix = isNew
+          ? '💥 [CRASH #${record.index}]'
+          : '✨ [MINIMIZED CRASH #${record.index}] '
+                '(${previousLength}B -> ${copy.length}B)';
+      stderr.writeln(
+        '$prefix ${record.errorType} @ ${record.primaryBlame} — '
+        '${copy.length}B: $preview '
+        '(Test unit written to ${record.artifactPath})',
+      );
+    }
+    final hits = deduplicator.totalHits;
+    if (isNew || isMinimized || (hits & (hits - 1)) == 0) {
+      _syncCrashReportFile(deduplicator);
+    }
+  }
+
+  static void _syncCrashReportFile(CrashDeduplicator deduplicator) {
+    final reportPath = Platform.environment['FUZZ_CRASHES_REPORT_PATH'];
+    if (reportPath != null && reportPath.isNotEmpty) {
+      deduplicator.writeReportJson(reportPath);
+    }
+  }
+
+  static void _finalizeCrashReport(CrashDeduplicator deduplicator) {
+    final reportPath = Platform.environment['FUZZ_CRASHES_REPORT_PATH'];
+    if (reportPath != null && reportPath.isNotEmpty) {
+      deduplicator.writeReportJson(reportPath);
+      return;
+    }
+    stderr.write(deduplicator.formatSummaryReport());
+  }
+
   static Never _reportUnhandledCrash(
     Uint8List data,
     Object error,
-    StackTrace st, {
-    List<String> fuzzerArgs = const [],
-  }) {
-    final crashPath = _writeCrashArtifact(data, fuzzerArgs);
+    StackTrace st,
+    CrashDeduplicator deduplicator,
+  ) {
+    final crashPath = deduplicator.writeRawArtifact(data);
     final hex = data
         .map((b) => '0x${b.toRadixString(16).padLeft(2, '0')}')
         .join(', ');
@@ -334,44 +405,10 @@ abstract final class FuzzRuntime {
     exit(77);
   }
 
-  static String _writeCrashArtifact(Uint8List data, List<String> fuzzerArgs) {
-    final path = _resolveCrashArtifactPath(data, fuzzerArgs);
-    final file = File(path);
-    file.parent.createSync(recursive: true);
-    file.writeAsBytesSync(data);
-    return path;
-  }
-
-  static String _resolveCrashArtifactPath(
-    Uint8List data,
-    List<String> fuzzerArgs,
-  ) {
-    var prefix = './';
-    for (final arg in fuzzerArgs) {
-      if (arg.startsWith('-exact_artifact_path=')) {
-        final exact = arg.substring('-exact_artifact_path='.length);
-        if (exact.isNotEmpty) return exact;
-      } else if (arg.startsWith('-artifact_prefix=')) {
-        prefix = arg.substring('-artifact_prefix='.length);
-      }
-    }
-    return '${prefix}crash-${_fnv1a64Hex(data)}';
-  }
-
-  static String _fnv1a64Hex(Uint8List data) {
-    var hash = 0xcbf29ce484222325;
-    for (var i = 0; i < data.length; i++) {
-      hash ^= data[i];
-      hash = (hash * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF;
-    }
-    final hi = ((hash >>> 32) & 0xFFFFFFFF).toRadixString(16).padLeft(8, '0');
-    final lo = (hash & 0xFFFFFFFF).toRadixString(16).padLeft(8, '0');
-    return '$hi$lo';
-  }
-
   static int _runPureDartDriver(
     int Function(Uint8List data) target, {
     required List<String> fuzzerArgs,
+    required CrashDeduplicator deduplicator,
   }) {
     final (:runs, :maxLen, :maxTotalTime, :seed, :dictPath, :corpusPaths) =
         _parsePureDartFlags(fuzzerArgs);
@@ -405,19 +442,14 @@ abstract final class FuzzRuntime {
             );
       _resetPerInputState();
       final copy = Uint8List.fromList(mutated);
-      try {
-        target(copy);
-      } on Object catch (e, st) {
-        flushSiteHits();
-        _reportUnhandledCrash(copy, e, st, fuzzerArgs: fuzzerArgs);
-      }
+      _invokeTarget(target, copy, deduplicator);
       completedRuns = i + 1;
       final addedEdges = _mergeAndClearCoverage(_covMap, globalMaxMap);
       totalCovEdges += addedEdges;
       if (addedEdges > 0 && !isInitialSeed) {
         corpus.add(mutated);
         if (persistDir != null) {
-          File('$persistDir/${_fnv1a64Hex(mutated)}').writeAsBytesSync(mutated);
+          File('$persistDir/${fnv1a64Hex(mutated)}').writeAsBytesSync(mutated);
         }
         _logPureDartProgress('NEW', completedRuns, totalCovEdges, corpus);
       } else if (completedRuns == initialCorpusLen) {

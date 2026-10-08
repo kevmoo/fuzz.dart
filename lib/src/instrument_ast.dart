@@ -1101,11 +1101,11 @@ class PackageOverlayInstrumentor {
     final instrumentedRoot = p.join(fuzzDir, 'instrumented');
 
     final updatedPackages = <Map<String, Object?>>[];
-    var hasFuzz = false;
+    final presentNames = <String>{};
 
     for (final entry in packages) {
       final name = entry['name'] as String;
-      if (name == 'fuzz') hasFuzz = true;
+      presentNames.add(name);
       if (name == packageName) {
         updatedPackages.add(
           _buildRootPackageEntry(entry, rootDir, instrumentedRoot),
@@ -1121,15 +1121,7 @@ class PackageOverlayInstrumentor {
       }
     }
 
-    if (!hasFuzz) {
-      final fuzzRoot = await _resolveFuzzPackageRoot();
-      updatedPackages.add({
-        'name': 'fuzz',
-        'rootUri': p.toUri(fuzzRoot).toString(),
-        'packageUri': 'lib/',
-        'languageVersion': _resolveFuzzLanguageVersion(fuzzRoot),
-      });
-    }
+    await _injectMissingRuntimePackages(updatedPackages, presentNames);
 
     final overlayConfigPath = p.join(fuzzDir, 'package_config.json');
     final overlayMap = <String, Object?>{
@@ -1140,6 +1132,67 @@ class PackageOverlayInstrumentor {
       overlayConfigPath,
     ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(overlayMap));
     return overlayConfigPath;
+  }
+
+  static const _runtimeDependencies = ['fuzz', 'stack_trace', 'path'];
+
+  static Future<void> _injectMissingRuntimePackages(
+    List<Map<String, Object?>> updatedPackages,
+    Set<String> presentNames,
+  ) async {
+    if (_runtimeDependencies.every(presentNames.contains)) return;
+    final fuzzRoot = await _resolveFuzzPackageRoot();
+    if (!presentNames.contains('fuzz')) {
+      updatedPackages.add({
+        'name': 'fuzz',
+        'rootUri': p.toUri(fuzzRoot).toString(),
+        'packageUri': 'lib/',
+        'languageVersion': _resolveFuzzLanguageVersion(fuzzRoot),
+      });
+    }
+    for (final depName in const ['stack_trace', 'path']) {
+      if (presentNames.contains(depName)) continue;
+      final depRoot = await _resolveRuntimeDepRoot(depName, fuzzRoot);
+      if (depRoot == null) continue;
+      updatedPackages.add({
+        'name': depName,
+        'rootUri': p.toUri(depRoot).toString(),
+        'packageUri': 'lib/',
+        'languageVersion': _resolveFuzzLanguageVersion(depRoot),
+      });
+    }
+  }
+
+  static Future<String?> _resolveRuntimeDepRoot(
+    String depName,
+    String fuzzRoot,
+  ) async {
+    final resolved = await Isolate.resolvePackageUri(
+      Uri.parse('package:$depName/$depName.dart'),
+    );
+    if (resolved != null) {
+      final root = p.dirname(p.dirname(resolved.toFilePath()));
+      if (File(p.join(root, 'lib', '$depName.dart')).existsSync()) return root;
+    }
+    final fuzzConfig = File(
+      p.join(fuzzRoot, '.dart_tool', 'package_config.json'),
+    );
+    if (fuzzConfig.existsSync()) {
+      final raw =
+          jsonDecode(fuzzConfig.readAsStringSync()) as Map<String, Object?>;
+      final configDir = p.dirname(fuzzConfig.path);
+      final pkgs = (raw['packages'] as List<Object?>)
+          .cast<Map<String, Object?>>();
+      for (final entry in pkgs) {
+        if (entry['name'] != depName) continue;
+        final abs = _absolutizePackageEntry(entry, configDir);
+        return p.fromUri(Uri.parse(abs['rootUri'] as String));
+      }
+    }
+    return _findPackageInPubCache(
+      '$depName-',
+      validate: (d) => File(p.join(d, 'lib', '$depName.dart')).existsSync(),
+    );
   }
 
   static Map<String, Object?> _buildRootPackageEntry(
@@ -1223,7 +1276,10 @@ class PackageOverlayInstrumentor {
       final found = _walkUpForFuzzRoot(start);
       if (found != null) return found;
     }
-    final fromPubCache = _findFuzzInPubCache();
+    final fromPubCache = _findPackageInPubCache(
+      'fuzz',
+      validate: _isValidFuzzRoot,
+    );
     if (fromPubCache != null) return fromPubCache;
     throw StateError(
       'Unable to locate package:fuzz root directory for child VM overlay. '
@@ -1244,7 +1300,10 @@ class PackageOverlayInstrumentor {
     }
   }
 
-  static String? _findFuzzInPubCache() {
+  static String? _findPackageInPubCache(
+    String prefix, {
+    required bool Function(String) validate,
+  }) {
     final cacheRoot =
         Platform.environment['PUB_CACHE'] ??
         p.join(
@@ -1260,8 +1319,8 @@ class PackageOverlayInstrumentor {
           dir
               .listSync()
               .whereType<Directory>()
-              .where((d) => p.basename(d.path).startsWith('fuzz'))
-              .where((d) => _isValidFuzzRoot(d.path))
+              .where((d) => p.basename(d.path).startsWith(prefix))
+              .where((d) => validate(d.path))
               .toList()
             ..sort((a, b) => b.path.compareTo(a.path));
       if (matches.isNotEmpty) return matches.first.path;
