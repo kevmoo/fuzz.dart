@@ -288,7 +288,7 @@ class _RunCommand extends Command<int> {
     return code;
   }
 
-  static List<String> _prepareFuzzerFlags({
+  List<String> _prepareFuzzerFlags({
     required ArgResults opts,
     required String pkgRoot,
     required String fuzzDir,
@@ -302,14 +302,10 @@ class _RunCommand extends Command<int> {
           a.startsWith('-artifact_prefix=') ||
           a.startsWith('-exact_artifact_path='),
     );
-    for (final arg in restArgs) {
-      if (arg.startsWith('-')) continue;
-      final candidate = p.isAbsolute(arg) ? arg : p.join(pkgRoot, arg);
-      if (FileSystemEntity.typeSync(candidate) ==
-          FileSystemEntityType.notFound) {
-        Directory(candidate).createSync(recursive: true);
-      }
-    }
+    final resolvedRestArgs = [
+      for (final arg in restArgs)
+        arg.startsWith('-') ? arg : _resolvePositionalArg(pkgRoot, arg),
+    ];
     final maxTotalTime = opts['max-total-time'] as String;
     return <String>[
       '-use_value_profile=1',
@@ -320,8 +316,33 @@ class _RunCommand extends Command<int> {
       if (maxTotalTime != '0') '-max_total_time=$maxTotalTime',
       if (resolvedDictPath != null) '-dict=$resolvedDictPath',
       if (!hasExplicitArtifactFlag) '-artifact_prefix=$crashesDir/',
-      ...restArgs,
+      ...resolvedRestArgs,
     ];
+  }
+
+  static const _reproducerPrefixes = [
+    'crash-',
+    'timeout-',
+    'oom-',
+    'leak-',
+    'slow-unit-',
+  ];
+
+  String _resolvePositionalArg(String pkgRoot, String rawPath) {
+    final absPath = p.normalize(p.absolute(rawPath));
+    if (FileSystemEntity.typeSync(absPath) != FileSystemEntityType.notFound) {
+      return absPath;
+    }
+    final pkgPath = p.normalize(p.join(pkgRoot, rawPath));
+    if (FileSystemEntity.typeSync(pkgPath) != FileSystemEntityType.notFound) {
+      return pkgPath;
+    }
+    final base = p.basename(rawPath);
+    if (_reproducerPrefixes.any(base.startsWith)) {
+      usageException('Reproducer file not found: $pkgPath');
+    }
+    Directory(pkgPath).createSync(recursive: true);
+    return pkgPath;
   }
 
   static String _prepareRunnerEntrypoint({
