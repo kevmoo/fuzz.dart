@@ -892,6 +892,7 @@ typedef OverlayResult = ({
   int comparesInserted,
   int switchesInserted,
   int dictionaryTokensExtracted,
+  bool cached,
 });
 
 /// Builds a non-destructive AST-instrumented copy of a target package's `lib/`
@@ -899,15 +900,22 @@ typedef OverlayResult = ({
 /// `<workDir>/instrumented/` and writes an overlay
 /// `<workDir>/package_config.json`.
 class PackageOverlayInstrumentor {
+  static const int _overlayCacheVersion = 1;
+
   /// Instruments `<packageRoot>/lib` (and any [additionalPackages] from
   /// `package_config.json`) into [workDir] (defaulting to
   /// `<packageRoot>/.dart_tool/fuzz/`) without modifying any tracked files in
   /// [packageRoot].
+  ///
+  /// When [force] is `false` (the default), reuses an existing up-to-date
+  /// overlay in `<workDir>/` without re-parsing ASTs if no source, config, or
+  /// `package:fuzz` files have changed.
   static Future<OverlayResult> instrumentPackage({
     required String packageRoot,
     String runtimeImport = 'package:fuzz/src/fuzz_runtime.dart',
     String? workDir,
     List<String> additionalPackages = const [],
+    bool force = false,
   }) async {
     final rootDir = p.normalize(p.absolute(packageRoot));
     final pubspecFile = File(p.join(rootDir, 'pubspec.yaml'));
@@ -926,6 +934,44 @@ class PackageOverlayInstrumentor {
         : p.join(rootDir, '.dart_tool', 'fuzz');
     final instrumentedRoot = p.join(fuzzDir, 'instrumented');
     final instrumentedLibDir = p.join(instrumentedRoot, 'lib');
+    final pkgConfigFile = _findPackageConfigFile(rootDir);
+    final rawJson =
+        jsonDecode(pkgConfigFile.readAsStringSync()) as Map<String, Object?>;
+    final configDir = p.dirname(pkgConfigFile.path);
+    final packages = (rawJson['packages'] as List<Object?>)
+        .cast<Map<String, Object?>>();
+
+    final normalizedDeps =
+        additionalPackages
+            .where((d) => d.isNotEmpty && d != packageName)
+            .toSet()
+            .toList()
+          ..sort();
+    final depLibDirs = <String, Directory>{
+      for (final depName in normalizedDeps)
+        depName: _resolveDependencyLibDir(packages, depName, configDir),
+    };
+    final inputFingerprints = await _computeOverlayInputFingerprints(
+      rootDir: rootDir,
+      pubspecFile: pubspecFile,
+      pkgConfigFile: pkgConfigFile,
+      sourceLibDir: sourceLibDir,
+      depLibDirs: depLibDirs,
+    );
+
+    if (!force) {
+      final cached = _tryLoadCachedOverlay(
+        fuzzDir: fuzzDir,
+        instrumentedRoot: instrumentedRoot,
+        instrumentedLibDir: instrumentedLibDir,
+        packageName: packageName,
+        runtimeImport: runtimeImport,
+        normalizedDeps: normalizedDeps,
+        inputFingerprints: inputFingerprints,
+      );
+      if (cached != null) return cached;
+    }
+
     final rootOutDir = Directory(instrumentedRoot);
     if (rootOutDir.existsSync()) {
       rootOutDir.deleteSync(recursive: true);
@@ -940,20 +986,12 @@ class PackageOverlayInstrumentor {
       runtimeImport: runtimeImport,
     );
 
-    final pkgConfigFile = _findPackageConfigFile(rootDir);
-    final rawJson =
-        jsonDecode(pkgConfigFile.readAsStringSync()) as Map<String, Object?>;
-    final configDir = p.dirname(pkgConfigFile.path);
-    final packages = (rawJson['packages'] as List<Object?>)
-        .cast<Map<String, Object?>>();
-
-    for (final depName in additionalPackages) {
-      if (depName.isEmpty || depName == packageName) continue;
-      final depLibDir = _resolveDependencyLibDir(packages, depName, configDir);
+    for (final entry in depLibDirs.entries) {
+      final depName = entry.key;
       final depOutLibDir = p.join(instrumentedRoot, depName, 'lib');
       Directory(depOutLibDir).createSync(recursive: true);
       filesInstrumented += _instrumentDirectoryTree(
-        sourceLibDir: depLibDir,
+        sourceLibDir: entry.value,
         instrumentedLibDir: depOutLibDir,
         instrumentor: instrumentor,
         runtimeImport: runtimeImport,
@@ -975,10 +1013,10 @@ class PackageOverlayInstrumentor {
       rootDir: rootDir,
       packageName: packageName,
       fuzzDir: fuzzDir,
-      additionalPackages: additionalPackages.toSet(),
+      additionalPackages: normalizedDeps.toSet(),
     );
 
-    return (
+    final result = (
       packageName: packageName,
       overlayPackageConfigPath: overlayConfigPath,
       edgeManifestPath: edgeManifestPath,
@@ -989,7 +1027,214 @@ class PackageOverlayInstrumentor {
       comparesInserted: instrumentor.comparesInserted,
       switchesInserted: instrumentor.switchesInserted,
       dictionaryTokensExtracted: instrumentor.dictionaryTokens.length,
+      cached: false,
     );
+    _writeOverlayCache(
+      fuzzDir: fuzzDir,
+      runtimeImport: runtimeImport,
+      normalizedDeps: normalizedDeps,
+      inputFingerprints: inputFingerprints,
+      result: result,
+    );
+    return result;
+  }
+
+  static Future<Map<String, String>> _computeOverlayInputFingerprints({
+    required String rootDir,
+    required File pubspecFile,
+    required File pkgConfigFile,
+    required Directory sourceLibDir,
+    required Map<String, Directory> depLibDirs,
+  }) async {
+    final fingerprints = <String, String>{
+      'pubspec.yaml': _fileStatToken(pubspecFile),
+      'pubspec.lock': _fileStatToken(File(p.join(rootDir, 'pubspec.lock'))),
+      'package_config.json': _fileStatToken(pkgConfigFile),
+    };
+    _collectDirectoryFingerprints(sourceLibDir, 'lib', fingerprints);
+    for (final entry in depLibDirs.entries) {
+      _collectDirectoryFingerprints(
+        entry.value,
+        'dep:${entry.key}',
+        fingerprints,
+      );
+    }
+    final fuzzRoot = await _tryResolveFuzzPackageRoot();
+    if (fuzzRoot != null) {
+      _collectDirectoryFingerprints(
+        Directory(p.join(fuzzRoot, 'lib')),
+        'fuzz_self',
+        fingerprints,
+      );
+    } else {
+      fingerprints['executable'] = _fileStatToken(
+        File(Platform.resolvedExecutable),
+      );
+    }
+    return fingerprints;
+  }
+
+  static void _collectDirectoryFingerprints(
+    Directory dir,
+    String prefix,
+    Map<String, String> out,
+  ) {
+    if (!dir.existsSync()) return;
+    final dirPath = p.normalize(dir.path);
+    final stripLen = dirPath.endsWith(p.separator)
+        ? dirPath.length
+        : dirPath.length + 1;
+    for (final entity in dir.listSync(recursive: true)) {
+      if (entity is! File) continue;
+      final rel = entity.path.substring(stripLen).replaceAll(r'\', '/');
+      out['$prefix/$rel'] = _fileStatToken(entity);
+    }
+  }
+
+  static String _fileStatToken(File file) {
+    final stat = file.statSync();
+    if (stat.type == FileSystemEntityType.notFound) return 'missing';
+    return '${stat.size}:${stat.modified.microsecondsSinceEpoch}';
+  }
+
+  static OverlayResult? _tryLoadCachedOverlay({
+    required String fuzzDir,
+    required String instrumentedRoot,
+    required String instrumentedLibDir,
+    required String packageName,
+    required String runtimeImport,
+    required List<String> normalizedDeps,
+    required Map<String, String> inputFingerprints,
+  }) {
+    final cachePath = p.join(fuzzDir, 'overlay_cache.json');
+    final edgeManifestPath = p.join(fuzzDir, 'edge_manifest.json');
+    final dictionaryPath = p.join(fuzzDir, 'auto.dict');
+    final overlayConfigPath = p.join(fuzzDir, 'package_config.json');
+    if (!_requiredOutputsExist(
+      cachePath: cachePath,
+      edgeManifestPath: edgeManifestPath,
+      dictionaryPath: dictionaryPath,
+      overlayConfigPath: overlayConfigPath,
+      instrumentedRoot: instrumentedRoot,
+      instrumentedLibDir: instrumentedLibDir,
+      normalizedDeps: normalizedDeps,
+    )) {
+      return null;
+    }
+    try {
+      final raw = jsonDecode(
+        File(cachePath).readAsStringSync(),
+      ) as Map<String, Object?>;
+      if (!_matchesCacheMetadata(
+        raw: raw,
+        packageName: packageName,
+        runtimeImport: runtimeImport,
+        normalizedDeps: normalizedDeps,
+        inputFingerprints: inputFingerprints,
+      )) {
+        return null;
+      }
+      return (
+        packageName: packageName,
+        overlayPackageConfigPath: overlayConfigPath,
+        edgeManifestPath: edgeManifestPath,
+        dictionaryPath: dictionaryPath,
+        instrumentedLibDir: instrumentedLibDir,
+        filesInstrumented: raw['filesInstrumented'] as int,
+        edgesInserted: raw['edgesInserted'] as int,
+        comparesInserted: raw['comparesInserted'] as int,
+        switchesInserted: raw['switchesInserted'] as int,
+        dictionaryTokensExtracted: raw['dictionaryTokensExtracted'] as int,
+        cached: true,
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  static bool _requiredOutputsExist({
+    required String cachePath,
+    required String edgeManifestPath,
+    required String dictionaryPath,
+    required String overlayConfigPath,
+    required String instrumentedRoot,
+    required String instrumentedLibDir,
+    required List<String> normalizedDeps,
+  }) {
+    final requiredFiles = [
+      cachePath,
+      edgeManifestPath,
+      dictionaryPath,
+      overlayConfigPath,
+    ];
+    if (requiredFiles.any((path) => !File(path).existsSync())) return false;
+    if (!Directory(instrumentedLibDir).existsSync()) return false;
+    for (final dep in normalizedDeps) {
+      if (!Directory(p.join(instrumentedRoot, dep, 'lib')).existsSync()) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _matchesCacheMetadata({
+    required Map<String, Object?> raw,
+    required String packageName,
+    required String runtimeImport,
+    required List<String> normalizedDeps,
+    required Map<String, String> inputFingerprints,
+  }) {
+    if (raw['version'] != _overlayCacheVersion ||
+        raw['packageName'] != packageName ||
+        raw['runtimeImport'] != runtimeImport) {
+      return false;
+    }
+    final cachedDeps = (raw['additionalPackages'] as List<Object?>)
+        .cast<String>();
+    if (!_stringListsEqual(cachedDeps, normalizedDeps)) return false;
+    final cachedInputs = (raw['inputs'] as Map<String, Object?>)
+        .cast<String, String>();
+    return _stringMapsEqual(cachedInputs, inputFingerprints);
+  }
+
+  static bool _stringListsEqual(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  static bool _stringMapsEqual(Map<String, String> a, Map<String, String> b) {
+    if (a.length != b.length) return false;
+    for (final entry in a.entries) {
+      if (b[entry.key] != entry.value) return false;
+    }
+    return true;
+  }
+
+  static void _writeOverlayCache({
+    required String fuzzDir,
+    required String runtimeImport,
+    required List<String> normalizedDeps,
+    required Map<String, String> inputFingerprints,
+    required OverlayResult result,
+  }) {
+    final cachePath = p.join(fuzzDir, 'overlay_cache.json');
+    final payload = <String, Object?>{
+      'version': _overlayCacheVersion,
+      'packageName': result.packageName,
+      'runtimeImport': runtimeImport,
+      'additionalPackages': normalizedDeps,
+      'filesInstrumented': result.filesInstrumented,
+      'edgesInserted': result.edgesInserted,
+      'comparesInserted': result.comparesInserted,
+      'switchesInserted': result.switchesInserted,
+      'dictionaryTokensExtracted': result.dictionaryTokensExtracted,
+      'inputs': inputFingerprints,
+    };
+    File(cachePath)
+        .writeAsStringSync(const JsonEncoder.withIndent('  ').convert(payload));
   }
 
   static Directory _resolveDependencyLibDir(
@@ -1258,6 +1503,15 @@ class PackageOverlayInstrumentor {
   }
 
   static Future<String> _resolveFuzzPackageRoot() async {
+    final resolved = await _tryResolveFuzzPackageRoot();
+    if (resolved != null) return resolved;
+    throw StateError(
+      'Unable to locate package:fuzz root directory for child VM overlay. '
+      'Set FUZZ_PACKAGE_ROOT or install package:fuzz in PUB_CACHE.',
+    );
+  }
+
+  static Future<String?> _tryResolveFuzzPackageRoot() async {
     final resolved = await Isolate.resolvePackageUri(
       Uri.parse('package:fuzz/fuzz.dart'),
     );
@@ -1276,15 +1530,7 @@ class PackageOverlayInstrumentor {
       final found = _walkUpForFuzzRoot(start);
       if (found != null) return found;
     }
-    final fromPubCache = _findPackageInPubCache(
-      'fuzz',
-      validate: _isValidFuzzRoot,
-    );
-    if (fromPubCache != null) return fromPubCache;
-    throw StateError(
-      'Unable to locate package:fuzz root directory for child VM overlay. '
-      'Set FUZZ_PACKAGE_ROOT or install package:fuzz in PUB_CACHE.',
-    );
+    return _findPackageInPubCache('fuzz', validate: _isValidFuzzRoot);
   }
 
   static bool _isValidFuzzRoot(String dir) =>

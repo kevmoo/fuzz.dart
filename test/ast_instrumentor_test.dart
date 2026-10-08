@@ -1276,5 +1276,187 @@ void fuzzTarget(Uint8List bytes) {
         );
       },
     );
+
+    test(
+      'reuses cached AST overlay when inputs are unchanged and invalidates on '
+      'source edits, file additions/deletions, --instrument-packages, missing '
+      'outputs, or --force-instrument',
+      () async {
+        await d.dir('cache_workspace', [
+          d.dir('dep_pkg', [
+            d.file('pubspec.yaml', 'name: dep_pkg\n'),
+            d.dir('lib', [
+              d.file('dep_pkg.dart', '''
+int depHelper(int x) => x == 7 ? 1 : 0;
+'''),
+            ]),
+          ]),
+          d.dir('cached_pkg', [
+            d.file('pubspec.yaml', 'name: cached_pkg\n'),
+            d.dir('.dart_tool', [
+              d.file(
+                'package_config.json',
+                jsonEncode({
+                  'configVersion': 2,
+                  'packages': [
+                    {
+                      'name': 'cached_pkg',
+                      'rootUri': '../',
+                      'packageUri': 'lib/',
+                      'languageVersion': '3.7',
+                    },
+                    {
+                      'name': 'dep_pkg',
+                      'rootUri': '../../dep_pkg',
+                      'packageUri': 'lib/',
+                      'languageVersion': '3.7',
+                    },
+                  ],
+                }),
+              ),
+            ]),
+            d.dir('lib', [
+              d.file('cached_pkg.dart', '''
+int checkValue(int v) {
+  if (v == 42) return 1;
+  return 0;
+}
+'''),
+            ]),
+          ]),
+        ]).create();
+
+        final pkgRoot = p.join(d.sandbox, 'cache_workspace', 'cached_pkg');
+        final first = await PackageOverlayInstrumentor.instrumentPackage(
+          packageRoot: pkgRoot,
+        );
+        expect(first.cached, isFalse);
+        expect(first.filesInstrumented, equals(1));
+        final outDart = File(
+          p.join(first.instrumentedLibDir, 'cached_pkg.dart'),
+        );
+        final mtimeAfterFirst = outDart.lastModifiedSync();
+
+        // 1. Unchanged inputs -> cache hit (`cached: true`), output file not
+        // rewritten.
+        final second = await PackageOverlayInstrumentor.instrumentPackage(
+          packageRoot: pkgRoot,
+        );
+        expect(second.cached, isTrue);
+        expect(second.filesInstrumented, equals(first.filesInstrumented));
+        expect(second.edgesInserted, equals(first.edgesInserted));
+        expect(second.comparesInserted, equals(first.comparesInserted));
+        expect(outDart.lastModifiedSync(), equals(mtimeAfterFirst));
+
+        // 2. `force: true` bypasses cache and re-instruments (`cached: false`).
+        final forced = await PackageOverlayInstrumentor.instrumentPackage(
+          packageRoot: pkgRoot,
+          force: true,
+        );
+        expect(forced.cached, isFalse);
+
+        // 3. Adding a file in lib/ invalidates cache (`cached: false`).
+        final extraFile = File(p.join(pkgRoot, 'lib', 'extra.dart'))
+          ..writeAsStringSync('int extraFn(int y) => y > 0 ? y : -y;\n');
+        final afterAdd = await PackageOverlayInstrumentor.instrumentPackage(
+          packageRoot: pkgRoot,
+        );
+        expect(afterAdd.cached, isFalse);
+        expect(afterAdd.filesInstrumented, equals(2));
+        expect(
+          File(p.join(afterAdd.instrumentedLibDir, 'extra.dart')).existsSync(),
+          isTrue,
+        );
+
+        // 4. Deleting a file in lib/ invalidates cache (`cached: false`) and
+        // removes the stale file from instrumented/lib/.
+        extraFile.deleteSync();
+        final afterDelete = await PackageOverlayInstrumentor.instrumentPackage(
+          packageRoot: pkgRoot,
+        );
+        expect(afterDelete.cached, isFalse);
+        expect(afterDelete.filesInstrumented, equals(1));
+        expect(
+          File(p.join(afterDelete.instrumentedLibDir, 'extra.dart'))
+              .existsSync(),
+          isFalse,
+        );
+
+        // 5. Editing an existing file in lib/ (even if mtime moves backward!)
+        // invalidates cache (`cached: false`).
+        final libFile = File(p.join(pkgRoot, 'lib', 'cached_pkg.dart'));
+        libFile
+          ..writeAsStringSync('''
+int checkValue(int v) {
+  if (v == 42 || v == 99) return 1;
+  return 0;
+}
+''')
+          ..setLastModifiedSync(DateTime.utc(2020));
+        final afterBackwardEdit =
+            await PackageOverlayInstrumentor.instrumentPackage(
+              packageRoot: pkgRoot,
+            );
+        expect(afterBackwardEdit.cached, isFalse);
+        expect(
+          afterBackwardEdit.comparesInserted,
+          greaterThan(first.comparesInserted),
+        );
+
+        // 6. Changing `additionalPackages` invalidates cache (`cached: false`).
+        final withDep = await PackageOverlayInstrumentor.instrumentPackage(
+          packageRoot: pkgRoot,
+          additionalPackages: const ['dep_pkg'],
+        );
+        expect(withDep.cached, isFalse);
+        expect(withDep.filesInstrumented, equals(2));
+
+        final withDepCached =
+            await PackageOverlayInstrumentor.instrumentPackage(
+              packageRoot: pkgRoot,
+              additionalPackages: const ['dep_pkg'],
+            );
+        expect(withDepCached.cached, isTrue);
+
+        // 7. Deleting a generated output artifact (`auto.dict`) invalidates
+        // cache (`cached: false`) and regenerates it.
+        File(withDepCached.dictionaryPath).deleteSync();
+        final afterMissingDict =
+            await PackageOverlayInstrumentor.instrumentPackage(
+              packageRoot: pkgRoot,
+              additionalPackages: const ['dep_pkg'],
+            );
+        expect(afterMissingDict.cached, isFalse);
+        expect(File(afterMissingDict.dictionaryPath).existsSync(), isTrue);
+
+        // 8. CLI `fuzz instrument` reports "Reused cached" on hit and
+        // "Instrumented" with `--force-instrument`.
+        final fuzzBin = p.join(Directory.current.path, 'bin', 'fuzz.dart');
+        final cliCached = await Process.run(Platform.resolvedExecutable, [
+          fuzzBin,
+          'instrument',
+          '--package-root=$pkgRoot',
+          '--instrument-packages=dep_pkg',
+        ]);
+        expect(cliCached.exitCode, equals(0), reason: '${cliCached.stderr}');
+        expect(
+          cliCached.stdout.toString(),
+          contains('Reused cached package:cached_pkg'),
+        );
+
+        final cliForced = await Process.run(Platform.resolvedExecutable, [
+          fuzzBin,
+          'instrument',
+          '--package-root=$pkgRoot',
+          '--instrument-packages=dep_pkg',
+          '--force-instrument',
+        ]);
+        expect(cliForced.exitCode, equals(0), reason: '${cliForced.stderr}');
+        expect(
+          cliForced.stdout.toString(),
+          contains('Instrumented package:cached_pkg'),
+        );
+      },
+    );
   });
 }
