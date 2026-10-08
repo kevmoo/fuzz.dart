@@ -1,8 +1,11 @@
 import 'dart:io';
 
+import 'package:analyzer/dart/analysis/utilities.dart';
+import 'package:analyzer/dart/ast/ast.dart';
+import 'package:args/args.dart';
 import 'package:args/command_runner.dart';
 import 'package:cli_util/cli_util.dart';
-import 'package:fuzz/fuzz.dart';
+import 'package:fuzz/src/coverage_report.dart';
 import 'package:fuzz/src/instrument_ast.dart';
 import 'package:fuzz/src/native_builder.dart';
 import 'package:path/path.dart' as p;
@@ -233,12 +236,9 @@ class _RunCommand extends Command<int> {
         ? null
         : await NativeFuzzerBuilder.buildSharedLibrary(outputDir: fuzzDir);
     final resolvedDictPath = _resolveDictionaryPath(
-      pkgRoot: pkgRoot,
-      fuzzDir: fuzzDir,
-      userDict: opts['dict'] as String?,
-      autoDict: opts['auto-dict'] as bool,
-      autoDictPath: overlay.dictionaryPath,
-      autoTokensCount: overlay.dictionaryTokensExtracted,
+      pkgRoot,
+      overlay.dictionaryTokensExtracted > 0 ? overlay.dictionaryPath : null,
+      opts,
     );
 
     final heapLimitMb = opts['heap-limit-mb'] as String;
@@ -293,7 +293,14 @@ class _RunCommand extends Command<int> {
     required String fuzzDir,
   }) {
     final targetSource = File(targetPath).readAsStringSync();
-    if (targetSource.contains('FuzzRuntime.runDriver')) {
+    final parsed = parseString(
+      content: targetSource,
+      throwIfDiagnostics: false,
+    );
+    final hasMain = parsed.unit.declarations.any(
+      (d) => d is FunctionDeclaration && d.name.lexeme == 'main',
+    );
+    if (hasMain) {
       return targetPath;
     }
     final wrapperPath = p.join(fuzzDir, 'fuzz_entrypoint.dart');
@@ -328,16 +335,15 @@ void main(List<String> args) {
     usageException('$label not found: $absPath');
   }
 
-  String? _resolveDictionaryPath({
-    required String pkgRoot,
-    required String fuzzDir,
-    required String? userDict,
-    required bool autoDict,
-    required String autoDictPath,
-    required int autoTokensCount,
-  }) {
+  String? _resolveDictionaryPath(
+    String pkgRoot,
+    String? autoDictPath,
+    ArgResults opts,
+  ) {
+    final userDict = opts['dict'] as String?;
+    final autoDict = opts['auto-dict'] as bool;
     final hasAuto =
-        autoDict && autoTokensCount > 0 && File(autoDictPath).existsSync();
+        autoDict && autoDictPath != null && File(autoDictPath).existsSync();
     if (userDict == null || userDict.isEmpty) {
       return hasAuto ? autoDictPath : null;
     }
@@ -347,7 +353,7 @@ void main(List<String> args) {
       label: 'Dictionary file',
     );
     if (!hasAuto) return userDictFile;
-    final mergedPath = p.join(fuzzDir, 'merged.dict');
+    final mergedPath = p.join(p.dirname(autoDictPath), 'merged.dict');
     final userContent = File(userDictFile).readAsStringSync();
     final autoContent = File(autoDictPath).readAsStringSync();
     File(mergedPath).writeAsStringSync('$userContent\n$autoContent');

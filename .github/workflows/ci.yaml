@@ -17,10 +17,10 @@ jobs:
       - name: Setup Dart SDK
         uses: dart-lang/setup-dart@v1
         with:
-          sdk: dev
+          sdk: stable
 
       - name: Install clang and LLVM compiler-rt
-        run: sudo apt-get update && sudo apt-get install -y clang llvm
+        run: sudo apt-get update && sudo apt-get install -y clang llvm libclang-rt-dev
 
       - name: Install dependencies
         run: dart pub get
