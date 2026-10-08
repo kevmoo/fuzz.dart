@@ -4,13 +4,24 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:fuzz/fuzz.dart';
+import 'package:fuzz/src/fuzz_runtime.dart';
 import 'package:fuzz/src/native_builder.dart';
 import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 
 void main() {
   group('NativeFuzzerBuilder', () {
+    test('embeddedFuzzerCc stays in sync with lib/src/native/fuzzer.cc and '
+        'materializes fallback file', () async {
+      final onDisk = File('lib/src/native/fuzzer.cc').readAsStringSync().trim();
+      expect(NativeFuzzerBuilder.embeddedFuzzerCc.trim(), equals(onDisk));
+
+      final resolved = await NativeFuzzerBuilder.resolveFuzzerCcPath(
+        fallbackOutputDir: d.sandbox,
+      );
+      expect(File(resolved).existsSync(), isTrue);
+    });
+
     test('fails hard with ToolchainMissingException and pure-dart hint when '
         'clang++ is missing', () async {
       expect(
@@ -45,8 +56,8 @@ void main() {
     test('records edge and comparison feedback and drives pure-Dart mutator '
         'including LHS constants and List<int> equality', () {
       FuzzRuntime.init(mode: FuzzMode.pureDart);
-      FuzzRuntime.covMap.fillRange(0, FuzzRuntime.numCounters, 0);
-      FuzzRuntime.prevLoc = 0;
+      $fuzzCovMap.fillRange(0, FuzzRuntime.numCounters, 0);
+      $fuzzPrevLoc = 0;
 
       $fuzzEdge(101);
       expect($fuzzEq(1000, 1000, 202), isTrue);
@@ -58,15 +69,15 @@ void main() {
       expect($fuzzXor(0x41, 0x61, 505), equals(0x20));
       expect($fuzzSwitch('hdr', <Object?>['hdr', 'body'], 606), 'hdr');
       expect($fuzzExpr(707, 'payload'), equals('payload'));
-      expect(FuzzRuntime.siteHits[707], equals(1));
+      expect($fuzzSiteHits[707], equals(1));
 
-      FuzzRuntime.siteHits[808] = 0;
+      $fuzzSiteHits[808] = 0;
       expect($fuzzBool(true, 808), isTrue);
-      expect(FuzzRuntime.siteHits[808], equals(1));
+      expect($fuzzSiteHits[808], equals(1));
       expect($fuzzBool(false, 808), isFalse);
-      expect(FuzzRuntime.siteHits[808], equals(3));
+      expect($fuzzSiteHits[808], equals(3));
 
-      final nonZero = FuzzRuntime.covMap.where((b) => b != 0).length;
+      final nonZero = $fuzzCovMap.where((b) => b != 0).length;
       expect(nonZero, greaterThanOrEqualTo(8));
 
       var foundRhsMagic = false;
@@ -229,25 +240,22 @@ void main(List<String> args) {
         clangExecutable: clang,
       );
       FuzzRuntime.init(mode: FuzzMode.cgf, libraryPath: libPath);
-      FuzzRuntime.covMap.fillRange(0, FuzzRuntime.numCounters, 0);
-      FuzzRuntime.prevLoc = 0;
+      $fuzzCovMap.fillRange(0, FuzzRuntime.numCounters, 0);
+      $fuzzPrevLoc = 0;
 
       $fuzzEdge(77);
       expect($fuzzEq(0xCAFEBABE, 0xCAFEBABE, 88), isTrue);
       expect($fuzzEq('magic', 'magic', 99), isTrue);
       expect($fuzzEq(const [0x46, 0x55], const [0x46, 0x5A], 100), isFalse);
-      expect(
-        FuzzRuntime.covMap.where((b) => b != 0).length,
-        greaterThanOrEqualTo(4),
-      );
+      expect($fuzzCovMap.where((b) => b != 0).length, greaterThanOrEqualTo(4));
 
       // Verify switching to pureDart and back to cgf preserves native siteHits
       // buffer identity.
-      final nativeSiteHitsRef = FuzzRuntime.siteHits;
+      final nativeSiteHitsRef = $fuzzSiteHits;
       FuzzRuntime.init(mode: FuzzMode.pureDart);
-      expect(identical(FuzzRuntime.siteHits, nativeSiteHitsRef), isTrue);
+      expect(identical($fuzzSiteHits, nativeSiteHitsRef), isTrue);
       FuzzRuntime.init(mode: FuzzMode.cgf, libraryPath: libPath);
-      expect(identical(FuzzRuntime.siteHits, nativeSiteHitsRef), isTrue);
+      expect(identical($fuzzSiteHits, nativeSiteHitsRef), isTrue);
     });
   });
 }

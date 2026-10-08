@@ -5,7 +5,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:analyzer/dart/analysis/utilities.dart';
-import 'package:fuzz/fuzz.dart';
+import 'package:fuzz/src/coverage_report.dart';
+import 'package:fuzz/src/fuzz_runtime.dart';
 import 'package:fuzz/src/instrument_ast.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -38,7 +39,7 @@ int check(int a, String s) {
         final instrumentor = AstInstrumentor();
         final out = instrumentor.instrumentSource(sample);
 
-        expect(out, contains("import 'package:fuzz/fuzz.dart';"));
+        expect(out, contains("import 'package:fuzz/src/fuzz_runtime.dart';"));
         expect(out, contains(r'$fuzzEdge('));
         expect(out, contains(r'$fuzzEq(a, 42,'));
         expect(out, contains(r'$fuzzSwitch(s,'));
@@ -153,11 +154,11 @@ int check(int a, int b) {
         final xorSiteId = instrumentor.sites
             .singleWhere((s) => s.kind == 'cmp')
             .id;
-        FuzzRuntime.siteHits[xorSiteId] = 0;
+        $fuzzSiteHits[xorSiteId] = 0;
         expect($fuzzXor(5, 5, xorSiteId), equals(0));
-        expect(FuzzRuntime.siteHits[xorSiteId], equals(1));
+        expect($fuzzSiteHits[xorSiteId], equals(1));
         expect($fuzzXor(5, 3, xorSiteId), equals(6));
-        expect(FuzzRuntime.siteHits[xorSiteId], equals(3));
+        expect($fuzzSiteHits[xorSiteId], equals(3));
       },
     );
 
@@ -370,11 +371,11 @@ class _SubEq {
       expect(parsed.errors, isEmpty);
 
       // Verify generic $fuzzXor on bool operands.
-      FuzzRuntime.siteHits[52317] = 0;
+      $fuzzSiteHits[52317] = 0;
       expect($fuzzXor(true, false, 52317), isTrue);
-      expect(FuzzRuntime.siteHits[52317], equals(1));
+      expect($fuzzSiteHits[52317], equals(1));
       expect($fuzzXor(true, true, 52317), isFalse);
-      expect(FuzzRuntime.siteHits[52317], equals(3));
+      expect($fuzzSiteHits[52317], equals(3));
     });
 
     test(
@@ -552,7 +553,10 @@ void main() {
       final instPart = File(
         p.join(res.instrumentedLibDir, 'src', 'part_file.dart'),
       ).readAsStringSync();
-      expect(instRoot, contains("import 'package:fuzz/fuzz.dart';"));
+      expect(
+        instRoot,
+        contains("import 'package:fuzz/src/fuzz_runtime.dart';"),
+      );
       expect(instPart, isNot(contains('import ')));
       expect(instPart, contains(r'$fuzzGt(x, 5,'));
 
@@ -588,7 +592,7 @@ void main() {
       // edge_manifest.json records all sites and computes exact per-file stats,
       // including K&R block lines and totalEdges == edgesInserted.
       final manifestJson = File(res.edgeManifestPath).readAsStringSync();
-      FuzzRuntime.siteHits.fillRange(0, FuzzRuntime.numCounters, 0);
+      $fuzzSiteHits.fillRange(0, FuzzRuntime.numCounters, 0);
       final manifestMap = jsonDecode(manifestJson) as Map<String, Object?>;
       final sites = (manifestMap['sites'] as List<Object?>)
           .cast<Map<String, Object?>>();
@@ -601,7 +605,7 @@ void main() {
       $fuzzEdge(firstId);
       final report = computeCoverageReport(
         edgeManifestJson: manifestJson,
-        siteHits: FuzzRuntime.siteHits,
+        siteHits: $fuzzSiteHits,
       );
       expect(report.packageName, equals('sample_pkg'));
       expect(report.hitSites, equals(1));

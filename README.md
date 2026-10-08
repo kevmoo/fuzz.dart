@@ -136,7 +136,7 @@ void checkHeader(int magic, String tag) {
 }
 
 // Instrumented overlay (.dart_tool/fuzz/instrumented/lib/parser.dart):
-import 'package:fuzz/fuzz.dart';
+import 'package:fuzz/src/fuzz_runtime.dart';
 
 void checkHeader(int magic, String tag) { $fuzzEdge(40503);
   if ($fuzzBool($fuzzEq(magic, 0xCAFEBABE, 56032), 15530)) { $fuzzEdge(31060);

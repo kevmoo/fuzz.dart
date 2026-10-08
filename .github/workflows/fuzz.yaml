@@ -50,7 +50,7 @@ on:
       sdk:
         description: 'Dart SDK channel (stable, beta, dev, main)'
         type: string
-        default: 'dev'
+        default: 'stable'
         required: false
       local_debug:
         description: 'Use local checkout of package:fuzz (only inside kevmoo/fuzz.dart)'

@@ -102,7 +102,7 @@ class AstInstrumentor {
   /// compilation unit (which inherits imports from its owning library).
   String instrumentSource(
     String source, {
-    String runtimeImport = 'package:fuzz/fuzz.dart',
+    String runtimeImport = 'package:fuzz/src/fuzz_runtime.dart',
     bool addImport = true,
     String filePath = '<memory>',
   }) {
@@ -253,10 +253,10 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     if (unp is! ThrowExpression && _alwaysThrows(unp)) return;
     if (unp is! ThrowExpression && _isInsideAssignmentRhs(expr)) return;
     if (unp is! ThrowExpression && _isInVoidPermittingContext(expr)) return;
-    if (preserveConditionFlow &&
-        unp is! ThrowExpression &&
-        _containsConditionFlowCheck(unp)) {
-      return;
+    if (preserveConditionFlow && unp is! ThrowExpression) {
+      final finder = _ConditionFlowFinder();
+      unp.accept(finder);
+      if (finder.found) return;
     }
     final target = unp is ThrowExpression ? unp.expression : expr;
     final id = owner._allocSite(
@@ -365,9 +365,10 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
 
   void _wrapConditionWithBool(Expression cond) {
     final unp = cond.unParenthesized;
-    if (unp is BooleanLiteral || _containsFlowSensitiveCheck(unp)) {
-      return;
-    }
+    if (unp is BooleanLiteral) return;
+    final finder = _FlowSensitiveFinder();
+    unp.accept(finder);
+    if (finder.found) return;
     if (unp is BinaryExpression) {
       final op = unp.operator.type;
       if (op == TokenType.AMPERSAND_AMPERSAND || op == TokenType.BAR_BAR) {
@@ -406,18 +407,6 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
           replacement: ', $id)',
         ),
       );
-  }
-
-  static bool _containsFlowSensitiveCheck(AstNode node) {
-    final finder = _FlowSensitiveFinder();
-    node.accept(finder);
-    return finder.found;
-  }
-
-  static bool _containsConditionFlowCheck(AstNode node) {
-    final finder = _ConditionFlowFinder();
-    node.accept(finder);
-    return finder.found;
   }
 
   @override
@@ -715,7 +704,7 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
   @override
   void visitSimpleStringLiteral(SimpleStringLiteral node) {
     final val = node.value;
-    if (_isInsideRegExpCall(node) || _looksLikeRegexSyntax(val)) {
+    if (_isInsideRegExpCall(node) || _regexMetaFragments.hasMatch(val)) {
       _harvestRegExpTokens(val);
     } else if (_isCandidateDictString(val) &&
         !_isDirectiveOrErrorLiteral(node) &&
@@ -729,7 +718,10 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
   void visitIntegerLiteral(IntegerLiteral node) {
     final val = node.value;
     if (val != null &&
-        _isPrintableOrWhitespaceAscii(val) &&
+        ((val >= 0x20 && val <= 0x7E) ||
+            val == 0x09 ||
+            val == 0x0A ||
+            val == 0x0D) &&
         _isComparisonOrSwitchLiteral(node)) {
       owner.dictionaryTokens.add(String.fromCharCode(val));
     }
@@ -752,14 +744,8 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     r'\(\?:|\[[a-zA-Z0-9^]|\\[dsSwWbB]',
   );
 
-  static bool _looksLikeRegexSyntax(String val) =>
-      _regexMetaFragments.hasMatch(val);
-
   static bool _isCandidateDictString(String val) =>
       val.isNotEmpty && val.length <= 24 && ' '.allMatches(val).length <= 1;
-
-  static bool _isPrintableOrWhitespaceAscii(int v) =>
-      (v >= 0x20 && v <= 0x7E) || v == 0x09 || v == 0x0A || v == 0x0D;
 
   static bool _isComparisonOrSwitchLiteral(AstNode node) =>
       switch (node.parent) {
@@ -801,12 +787,15 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     AssertStatement() ||
     ThrowExpression() ||
     EnumConstantArguments() => true,
-    InstanceCreationExpression(:final constructorName) => _isExcludedTypeName(
-      constructorName.type.name.lexeme,
-    ),
-    MethodInvocation(:final methodName) => _isExcludedMethodName(
-      methodName.name,
-    ),
+    InstanceCreationExpression(:final constructorName) =>
+      constructorName.type.name.lexeme == 'StateError' ||
+          constructorName.type.name.lexeme.endsWith('Exception') ||
+          constructorName.type.name.lexeme.endsWith('Error'),
+    MethodInvocation(:final methodName) =>
+      methodName.name.toLowerCase().contains('error') ||
+          methodName.name.toLowerCase().contains('exception') ||
+          methodName.name.toLowerCase().contains('fail') ||
+          methodName.name.toLowerCase().contains('warn'),
     _ => _isErrorNamedArgument(cur),
   };
 
@@ -815,19 +804,6 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     final tok = cur.beginToken;
     return tok.next?.lexeme == ':' &&
         (tok.lexeme == 'name' || tok.lexeme == 'message');
-  }
-
-  static bool _isExcludedTypeName(String name) =>
-      name == 'StateError' ||
-      name.endsWith('Exception') ||
-      name.endsWith('Error');
-
-  static bool _isExcludedMethodName(String name) {
-    final lower = name.toLowerCase();
-    return lower.contains('error') ||
-        lower.contains('exception') ||
-        lower.contains('fail') ||
-        lower.contains('warn');
   }
 }
 
@@ -919,7 +895,7 @@ class PackageOverlayInstrumentor {
   /// [packageRoot].
   static Future<OverlayResult> instrumentPackage({
     required String packageRoot,
-    String runtimeImport = 'package:fuzz/fuzz.dart',
+    String runtimeImport = 'package:fuzz/src/fuzz_runtime.dart',
     String? workDir,
     List<String> additionalPackages = const [],
   }) async {
@@ -1223,8 +1199,63 @@ class PackageOverlayInstrumentor {
       Uri.parse('package:fuzz/fuzz.dart'),
     );
     if (resolved != null) {
-      return p.dirname(p.dirname(resolved.toFilePath()));
+      final root = p.dirname(p.dirname(resolved.toFilePath()));
+      if (_isValidFuzzRoot(root)) return root;
     }
-    return p.normalize(p.absolute('.'));
+    final envRoot = Platform.environment['FUZZ_PACKAGE_ROOT'];
+    if (envRoot != null && envRoot.isNotEmpty && _isValidFuzzRoot(envRoot)) {
+      return p.normalize(p.absolute(envRoot));
+    }
+    for (final start in [
+      Directory.current.path,
+      p.dirname(Platform.resolvedExecutable),
+    ]) {
+      final found = _walkUpForFuzzRoot(start);
+      if (found != null) return found;
+    }
+    final fromPubCache = _findFuzzInPubCache();
+    if (fromPubCache != null) return fromPubCache;
+    throw StateError(
+      'Unable to locate package:fuzz root directory for child VM overlay. '
+      'Set FUZZ_PACKAGE_ROOT or install package:fuzz in PUB_CACHE.',
+    );
+  }
+
+  static bool _isValidFuzzRoot(String dir) =>
+      File(p.join(dir, 'lib', 'src', 'fuzz_runtime.dart')).existsSync();
+
+  static String? _walkUpForFuzzRoot(String startDir) {
+    var cur = p.normalize(p.absolute(startDir));
+    while (true) {
+      if (_isValidFuzzRoot(cur)) return cur;
+      final parent = p.dirname(cur);
+      if (parent == cur) return null;
+      cur = parent;
+    }
+  }
+
+  static String? _findFuzzInPubCache() {
+    final cacheRoot =
+        Platform.environment['PUB_CACHE'] ??
+        p.join(
+          Platform.environment['HOME'] ??
+              Platform.environment['USERPROFILE'] ??
+              '',
+          '.pub-cache',
+        );
+    for (final sub in [p.join('hosted', 'pub.dev'), 'git']) {
+      final dir = Directory(p.join(cacheRoot, sub));
+      if (!dir.existsSync()) continue;
+      final matches =
+          dir
+              .listSync()
+              .whereType<Directory>()
+              .where((d) => p.basename(d.path).startsWith('fuzz'))
+              .where((d) => _isValidFuzzRoot(d.path))
+              .toList()
+            ..sort((a, b) => b.path.compareTo(a.path));
+      if (matches.isNotEmpty) return matches.first.path;
+    }
+    return null;
   }
 }
