@@ -67,9 +67,13 @@ class _InstrumentCommand extends Command<int> {
         'input',
         help: 'Single .dart source file to instrument (optional).',
       )
-      ..addOption(
-        'output',
-        help: 'Output file path when --input is specified.',
+      ..addOption('output', help: 'Output file path when --input is specified.')
+      ..addFlag(
+        'force-instrument',
+        negatable: false,
+        help:
+            'Force re-instrumenting the target package overlay even if up to '
+            'date.',
       );
   }
 
@@ -99,13 +103,16 @@ class _InstrumentCommand extends Command<int> {
     final pkgRoot = opts['package-root'] as String;
     final workDir = opts['work-dir'] as String?;
     final additionalPackages = opts['instrument-packages'] as List<String>;
+    final forceInstrument = opts['force-instrument'] as bool;
     final res = await PackageOverlayInstrumentor.instrumentPackage(
       packageRoot: pkgRoot,
       workDir: workDir,
       additionalPackages: additionalPackages,
+      force: forceInstrument,
     );
+    final verb = res.cached ? 'Reused cached' : 'Instrumented';
     stdout.writeln(
-      'Instrumented package:${res.packageName} '
+      '$verb package:${res.packageName} '
       '(${res.filesInstrumented} files -> ${res.instrumentedLibDir}; '
       'edges: ${res.edgesInserted}, compares: ${res.comparesInserted}, '
       'switches: ${res.switchesInserted}, '
@@ -147,6 +154,13 @@ class _RunCommand extends Command<int> {
         help:
             'Additional dependency packages from package_config.json to '
             'AST-instrument (e.g. yaml,source_span).',
+      )
+      ..addFlag(
+        'force-instrument',
+        negatable: false,
+        help:
+            'Force re-instrumenting the target package overlay even if up to '
+            'date.',
       )
       ..addOption(
         'dict',
@@ -219,6 +233,7 @@ class _RunCommand extends Command<int> {
         ? p.normalize(p.absolute(rawWorkDir))
         : p.join(pkgRoot, '.dart_tool', 'fuzz');
     final additionalPackages = opts['instrument-packages'] as List<String>;
+    final forceInstrument = opts['force-instrument'] as bool;
     final targetPath = _resolveFileInPackage(
       pkgRoot,
       rawTarget,
@@ -230,9 +245,13 @@ class _RunCommand extends Command<int> {
       packageRoot: pkgRoot,
       workDir: fuzzDir,
       additionalPackages: additionalPackages,
+      force: forceInstrument,
     );
+    final overlayAction = overlay.cached
+        ? 'Reused cached AST overlay'
+        : 'Prepared AST overlay';
     stdout.writeln(
-      'Prepared AST overlay for package:${overlay.packageName} '
+      '$overlayAction for package:${overlay.packageName} '
       '(${overlay.filesInstrumented} files, ${overlay.edgesInserted} edges, '
       '${overlay.comparesInserted} compares, '
       '${overlay.switchesInserted} switches, '

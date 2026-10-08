@@ -126,7 +126,9 @@ To capture fast per-input coverage and comparison operands on a stock Dart VM,
 `fuzz run` uses `package:analyzer` to rewrite your package's `lib/` files into
 `.dart_tool/fuzz/instrumented/` and generates an overlay
 `.dart_tool/fuzz/package_config.json` that redirects `package:<target>/...`
-imports to the instrumented copy:
+imports to the instrumented copy. Subsequent runs automatically reuse the cached
+overlay when source files, `package_config.json`, and `package:fuzz` are
+unchanged (pass `--force-instrument` to force a full rebuild):
 
 ```dart
 // Original source (lib/parser.dart):
