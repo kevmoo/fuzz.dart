@@ -204,7 +204,6 @@ class _RunCommand extends Command<int> {
       usageException('Missing required positional argument: <target.dart>.');
     }
     final rawTarget = opts.rest.first;
-    final restArgs = opts.rest.sublist(1);
 
     final pkgRoot = p.normalize(p.absolute(opts['package-root'] as String));
     final rawWorkDir = opts['work-dir'] as String?;
@@ -247,35 +246,13 @@ class _RunCommand extends Command<int> {
       opts,
     );
 
-    final crashesDir = p.join(fuzzDir, 'crashes');
-    Directory(crashesDir).createSync(recursive: true);
-    final hasExplicitArtifactFlag = restArgs.any(
-      (a) =>
-          a.startsWith('-artifact_prefix=') ||
-          a.startsWith('-exact_artifact_path='),
-    );
-    for (final arg in restArgs) {
-      if (arg.startsWith('-')) continue;
-      final candidate = p.isAbsolute(arg) ? arg : p.join(pkgRoot, arg);
-      if (FileSystemEntity.typeSync(candidate) ==
-          FileSystemEntityType.notFound) {
-        Directory(candidate).createSync(recursive: true);
-      }
-    }
-
     final heapLimitMb = opts['heap-limit-mb'] as String;
-    final fuzzerFlags = <String>[
-      '-use_value_profile=1',
-      '-runs=${opts['runs']}',
-      '-max_len=${opts['max-len']}',
-      '-rss_limit_mb=${opts['rss-limit-mb']}',
-      '-timeout=${opts['timeout']}',
-      if ((opts['max-total-time'] as String) != '0')
-        '-max_total_time=${opts['max-total-time']}',
-      if (resolvedDictPath != null) '-dict=$resolvedDictPath',
-      if (!hasExplicitArtifactFlag) '-artifact_prefix=$crashesDir/',
-      ...restArgs,
-    ];
+    final fuzzerFlags = _prepareFuzzerFlags(
+      opts: opts,
+      pkgRoot: pkgRoot,
+      fuzzDir: fuzzDir,
+      resolvedDictPath: resolvedDictPath,
+    );
 
     final dartBin =
         dartExecutable ??
@@ -309,6 +286,42 @@ class _RunCommand extends Command<int> {
       siteHitsFile: siteHitsFile,
     );
     return code;
+  }
+
+  static List<String> _prepareFuzzerFlags({
+    required ArgResults opts,
+    required String pkgRoot,
+    required String fuzzDir,
+    required String? resolvedDictPath,
+  }) {
+    final restArgs = opts.rest.sublist(1);
+    final crashesDir = p.join(fuzzDir, 'crashes');
+    Directory(crashesDir).createSync(recursive: true);
+    final hasExplicitArtifactFlag = restArgs.any(
+      (a) =>
+          a.startsWith('-artifact_prefix=') ||
+          a.startsWith('-exact_artifact_path='),
+    );
+    for (final arg in restArgs) {
+      if (arg.startsWith('-')) continue;
+      final candidate = p.isAbsolute(arg) ? arg : p.join(pkgRoot, arg);
+      if (FileSystemEntity.typeSync(candidate) ==
+          FileSystemEntityType.notFound) {
+        Directory(candidate).createSync(recursive: true);
+      }
+    }
+    final maxTotalTime = opts['max-total-time'] as String;
+    return <String>[
+      '-use_value_profile=1',
+      '-runs=${opts['runs']}',
+      '-max_len=${opts['max-len']}',
+      '-rss_limit_mb=${opts['rss-limit-mb']}',
+      '-timeout=${opts['timeout']}',
+      if (maxTotalTime != '0') '-max_total_time=$maxTotalTime',
+      if (resolvedDictPath != null) '-dict=$resolvedDictPath',
+      if (!hasExplicitArtifactFlag) '-artifact_prefix=$crashesDir/',
+      ...restArgs,
+    ];
   }
 
   static String _prepareRunnerEntrypoint({
