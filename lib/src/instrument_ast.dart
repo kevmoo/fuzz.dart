@@ -130,11 +130,21 @@ class AstInstrumentor {
 
     final instrumentedBody = sb.toString();
     final isPartOf = unit.directives.any((d) => d is PartOfDirective);
-    if (!addImport || isPartOf) return instrumentedBody;
+    final hasPartDirective = unit.directives.any((d) => d is PartDirective);
+    if (edits.isEmpty && !hasPartDirective) return source;
+    if (!addImport || isPartOf) {
+      if (edits.isEmpty) return instrumentedBody;
+      return '$instrumentedBody\n'
+          '// ignore_for_file: type=lint, unawaited_return_in_try_block, '
+          'duplicate_ignore\n';
+    }
 
     final insertPos = _findImportInsertOffset(unit);
+    final ignored = edits.isEmpty
+        ? 'type=lint, unused_import, duplicate_ignore'
+        : 'type=lint, unawaited_return_in_try_block, duplicate_ignore';
     return '${instrumentedBody.substring(0, insertPos)}\n'
-        "import '$runtimeImport';\n"
+        "import '$runtimeImport'; // ignore_for_file: $ignored\n"
         '${instrumentedBody.substring(insertPos)}';
   }
 

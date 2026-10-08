@@ -123,13 +123,13 @@ class _RunCommand extends Command<int> {
   String get description =>
       'Instruments the target package and runs a fuzz target harness.';
 
+  @override
+  String get invocation =>
+      '${runner!.executableName} $name [arguments] <target.dart> '
+      '[corpus_or_fuzzer_args...]';
+
   _RunCommand() {
     argParser
-      ..addOption(
-        'target',
-        help: 'Path to the Dart fuzz harness script.',
-        mandatory: true,
-      )
       ..addOption(
         'package-root',
         help: 'Target package directory whose lib/ will be instrumented.',
@@ -200,6 +200,11 @@ class _RunCommand extends Command<int> {
   @override
   Future<int> run() async {
     final opts = argResults!;
+    if (opts.rest.isEmpty || opts.rest.first.startsWith('-')) {
+      usageException('Missing required positional argument: <target.dart>.');
+    }
+    final rawTarget = opts.rest.first;
+
     final pkgRoot = p.normalize(p.absolute(opts['package-root'] as String));
     final rawWorkDir = opts['work-dir'] as String?;
     final fuzzDir = rawWorkDir != null && rawWorkDir.isNotEmpty
@@ -208,7 +213,7 @@ class _RunCommand extends Command<int> {
     final additionalPackages = opts['instrument-packages'] as List<String>;
     final targetPath = _resolveFileInPackage(
       pkgRoot,
-      opts['target'] as String,
+      rawTarget,
       label: 'Target script',
     );
     final modeStr = opts['mode'] as String;
@@ -242,17 +247,12 @@ class _RunCommand extends Command<int> {
     );
 
     final heapLimitMb = opts['heap-limit-mb'] as String;
-    final fuzzerFlags = <String>[
-      '-use_value_profile=1',
-      '-runs=${opts['runs']}',
-      '-max_len=${opts['max-len']}',
-      '-rss_limit_mb=${opts['rss-limit-mb']}',
-      '-timeout=${opts['timeout']}',
-      if ((opts['max-total-time'] as String) != '0')
-        '-max_total_time=${opts['max-total-time']}',
-      if (resolvedDictPath != null) '-dict=$resolvedDictPath',
-      ...opts.rest,
-    ];
+    final fuzzerFlags = _prepareFuzzerFlags(
+      opts: opts,
+      pkgRoot: pkgRoot,
+      fuzzDir: fuzzDir,
+      resolvedDictPath: resolvedDictPath,
+    );
 
     final dartBin =
         dartExecutable ??
@@ -286,6 +286,63 @@ class _RunCommand extends Command<int> {
       siteHitsFile: siteHitsFile,
     );
     return code;
+  }
+
+  List<String> _prepareFuzzerFlags({
+    required ArgResults opts,
+    required String pkgRoot,
+    required String fuzzDir,
+    required String? resolvedDictPath,
+  }) {
+    final restArgs = opts.rest.sublist(1);
+    final crashesDir = p.join(fuzzDir, 'crashes');
+    Directory(crashesDir).createSync(recursive: true);
+    final hasExplicitArtifactFlag = restArgs.any(
+      (a) =>
+          a.startsWith('-artifact_prefix=') ||
+          a.startsWith('-exact_artifact_path='),
+    );
+    final resolvedRestArgs = [
+      for (final arg in restArgs)
+        arg.startsWith('-') ? arg : _resolvePositionalArg(pkgRoot, arg),
+    ];
+    final maxTotalTime = opts['max-total-time'] as String;
+    return <String>[
+      '-use_value_profile=1',
+      '-runs=${opts['runs']}',
+      '-max_len=${opts['max-len']}',
+      '-rss_limit_mb=${opts['rss-limit-mb']}',
+      '-timeout=${opts['timeout']}',
+      if (maxTotalTime != '0') '-max_total_time=$maxTotalTime',
+      if (resolvedDictPath != null) '-dict=$resolvedDictPath',
+      if (!hasExplicitArtifactFlag) '-artifact_prefix=$crashesDir/',
+      ...resolvedRestArgs,
+    ];
+  }
+
+  static const _reproducerPrefixes = [
+    'crash-',
+    'timeout-',
+    'oom-',
+    'leak-',
+    'slow-unit-',
+  ];
+
+  String _resolvePositionalArg(String pkgRoot, String rawPath) {
+    final absPath = p.normalize(p.absolute(rawPath));
+    if (FileSystemEntity.typeSync(absPath) != FileSystemEntityType.notFound) {
+      return absPath;
+    }
+    final pkgPath = p.normalize(p.join(pkgRoot, rawPath));
+    if (FileSystemEntity.typeSync(pkgPath) != FileSystemEntityType.notFound) {
+      return pkgPath;
+    }
+    final base = p.basename(rawPath);
+    if (_reproducerPrefixes.any(base.startsWith)) {
+      usageException('Reproducer file not found: $pkgPath');
+    }
+    Directory(pkgPath).createSync(recursive: true);
+    return pkgPath;
   }
 
   static String _prepareRunnerEntrypoint({

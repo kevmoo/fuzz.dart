@@ -59,20 +59,20 @@ void fuzzTarget(Uint8List data) {
 
 ```bash
 # Run coverage-guided libFuzzer (requires clang++ with compiler-rt):
-dart run fuzz run --package-root=. --target=test/fuzz/my_fuzz.dart
+dart run fuzz run test/fuzz/my_fuzz.dart
 
 # Instrument delegated dependency packages (e.g. front_matter -> package:yaml),
 # supply a custom AFL/libFuzzer dictionary (merged with auto.dict), and isolate
 # parallel runs with --work-dir:
 dart run fuzz run --package-root=. --instrument-packages=yaml,source_span \
   --dict=test/fuzz/yaml.dict --work-dir=.dart_tool/fuzz/my_fuzz \
-  --target=test/fuzz/my_fuzz.dart
+  test/fuzz/my_fuzz.dart
 
 # Run for 30 seconds in CI and emit coverage_report.json:
-dart run fuzz run --package-root=. --target=test/fuzz/my_fuzz.dart -- -max_total_time=30
+dart run fuzz run test/fuzz/my_fuzz.dart -- -max_total_time=30
 
 # Run in pure-Dart mode (no clang++ required):
-dart run fuzz run --mode=pure-dart --package-root=. --target=test/fuzz/my_fuzz.dart
+dart run fuzz run --mode=pure-dart test/fuzz/my_fuzz.dart
 ```
 
 ### Continuous Fuzzing in GitHub Actions

@@ -70,6 +70,7 @@ bool isHeaderByte(int b) {
         final out = instrumentor.instrumentSource(partSample);
 
         expect(out, isNot(contains('import ')));
+        expect(out, contains('// ignore_for_file: type=lint'));
         expect(out, contains(r'$fuzzEq(b, 0xFE,'));
         expect(out, contains(r'$fuzzLt(b, 0x20,'));
 
@@ -77,6 +78,48 @@ bool isHeaderByte(int b) {
         expect(parsed.errors, isEmpty);
       },
     );
+
+    test('returns 0-edit barrel/const and part-of files unmodified while '
+        'preserving import on files with `part` directives', () {
+      const barrelSample = '''
+export 'src/a.dart';
+export 'src/b.dart';
+
+const int kVersion = 1;
+''';
+      final barrelInstrumentor = AstInstrumentor();
+      final barrelOut = barrelInstrumentor.instrumentSource(barrelSample);
+      expect(barrelOut, equals(barrelSample));
+      expect(barrelOut, isNot(contains('fuzz_runtime.dart')));
+
+      const zeroEditPartOfSample = '''
+part of 'parent.dart';
+
+const int kPartConst = 42;
+''';
+      final zeroEditPartOfOut = AstInstrumentor().instrumentSource(
+        zeroEditPartOfSample,
+      );
+      expect(zeroEditPartOfOut, equals(zeroEditPartOfSample));
+      expect(zeroEditPartOfOut, isNot(contains('ignore_for_file')));
+
+      const parentWithPartSample = '''
+library parent;
+
+part 'src/child.dart';
+''';
+      final parentInstrumentor = AstInstrumentor();
+      final parentOut = parentInstrumentor.instrumentSource(
+        parentWithPartSample,
+      );
+      expect(
+        parentOut,
+        contains(
+          "import 'package:fuzz/src/fuzz_runtime.dart'; "
+          '// ignore_for_file: type=lint, unused_import, duplicate_ignore',
+        ),
+      );
+    });
 
     test(
       'preserves == null and != null for Dart flow-analysis type promotion',
@@ -839,13 +882,15 @@ void fuzzTarget(Uint8List bytes) {
 
       final pkgRoot = p.join(d.sandbox, 'zero_dep_pkg');
       final fuzzBin = p.join(Directory.current.path, 'bin', 'fuzz.dart');
+      final corpusDir = p.join(pkgRoot, '.dart_tool', 'fuzz', 'custom_corpus');
       final res = await Process.run(Platform.resolvedExecutable, [
         fuzzBin,
         'run',
         '--package-root=$pkgRoot',
-        '--target=test/fuzz/zero_dep_fuzz.dart',
         '--mode=pure-dart',
         '--runs=20',
+        'test/fuzz/zero_dep_fuzz.dart',
+        corpusDir,
       ]);
       expect(
         res.exitCode,
@@ -856,6 +901,183 @@ void fuzzTarget(Uint8List bytes) {
         File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'fuzz_entrypoint.dart'))
             .existsSync(),
         isTrue,
+      );
+      expect(
+        Directory(p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes'))
+            .existsSync(),
+        isTrue,
+      );
+      expect(Directory(corpusDir).existsSync(), isTrue);
+    });
+
+    test('fuzz run writes crash artifacts into .dart_tool/fuzz/crashes/ by '
+        'default leaving package root clean', () async {
+      await d.dir('crash_pkg', [
+        d.file('pubspec.yaml', 'name: crash_pkg\n'),
+        d.dir('.dart_tool', [
+          d.file(
+            'package_config.json',
+            jsonEncode({
+              'configVersion': 2,
+              'packages': [
+                {
+                  'name': 'crash_pkg',
+                  'rootUri': '../',
+                  'packageUri': 'lib/',
+                  'languageVersion': '3.7',
+                },
+              ],
+            }),
+          ),
+        ]),
+        d.dir('lib', [
+          d.file('crash_pkg.dart', '''
+void triggerCrash() {
+  throw StateError('boom');
+}
+'''),
+        ]),
+        d.dir('test', [
+          d.dir('fuzz', [
+            d.file('crash_fuzz.dart', '''
+import 'dart:typed_data';
+import 'package:crash_pkg/crash_pkg.dart';
+
+void fuzzTarget(Uint8List bytes) {
+  triggerCrash();
+}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final pkgRoot = p.join(d.sandbox, 'crash_pkg');
+      final fuzzBin = p.join(Directory.current.path, 'bin', 'fuzz.dart');
+      final res = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--mode=pure-dart',
+        '--runs=5',
+        'test/fuzz/crash_fuzz.dart',
+      ]);
+      expect(res.exitCode, equals(77), reason: '${res.stderr}');
+
+      // Package root must have zero crash-* files.
+      final rootCrashFiles = Directory(pkgRoot)
+          .listSync()
+          .whereType<File>()
+          .where((f) => p.basename(f.path).startsWith('crash-'))
+          .toList();
+      expect(rootCrashFiles, isEmpty);
+
+      // .dart_tool/fuzz/crashes/ must contain the crash file.
+      final crashesDir = Directory(
+        p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes'),
+      );
+      final crashFiles = crashesDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => p.basename(f.path).startsWith('crash-'))
+          .toList();
+      expect(crashFiles, hasLength(1));
+    });
+
+    test('fuzz run supports -artifact_prefix= override and fails fast on '
+        'missing target or reproducer', () async {
+      await d.dir('override_pkg', [
+        d.file('pubspec.yaml', 'name: override_pkg\n'),
+        d.dir('.dart_tool', [
+          d.file(
+            'package_config.json',
+            jsonEncode({
+              'configVersion': 2,
+              'packages': [
+                {
+                  'name': 'override_pkg',
+                  'rootUri': '../',
+                  'packageUri': 'lib/',
+                  'languageVersion': '3.7',
+                },
+              ],
+            }),
+          ),
+        ]),
+        d.dir('lib', [
+          d.file('override_pkg.dart', '''
+void triggerCrash() {
+  throw StateError('boom');
+}
+'''),
+        ]),
+        d.dir('test', [
+          d.dir('fuzz', [
+            d.file('crash_fuzz.dart', '''
+import 'dart:typed_data';
+import 'package:override_pkg/override_pkg.dart';
+
+void fuzzTarget(Uint8List bytes) {
+  triggerCrash();
+}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final pkgRoot = p.join(d.sandbox, 'override_pkg');
+      final fuzzBin = p.join(Directory.current.path, 'bin', 'fuzz.dart');
+
+      // Explicit -artifact_prefix= overrides the default crashes directory.
+      final customArtifactsDir = Directory(p.join(pkgRoot, 'custom_artifacts'))
+        ..createSync();
+      final customRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--mode=pure-dart',
+        '--runs=5',
+        'test/fuzz/crash_fuzz.dart',
+        '--',
+        '-artifact_prefix=${customArtifactsDir.path}/',
+      ]);
+      expect(customRes.exitCode, equals(77));
+      expect(
+        customArtifactsDir.listSync().whereType<File>().where(
+          (f) => p.basename(f.path).startsWith('crash-'),
+        ),
+        hasLength(1),
+      );
+
+      // Missing <target.dart> positional argument exits with code 64.
+      final missingTargetRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+      ]);
+      expect(missingTargetRes.exitCode, equals(64));
+      expect(
+        missingTargetRes.stderr.toString(),
+        contains('Missing required positional argument: <target.dart>.'),
+      );
+
+      // Missing crash-* reproducer fails fast (exit 64) without creating a
+      // directory.
+      final missingReproRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--mode=pure-dart',
+        'test/fuzz/crash_fuzz.dart',
+        'crash-doesnotexist',
+      ]);
+      expect(missingReproRes.exitCode, equals(64));
+      expect(
+        missingReproRes.stderr.toString(),
+        contains('Reproducer file not found'),
+      );
+      expect(
+        Directory(p.join(pkgRoot, 'crash-doesnotexist')).existsSync(),
+        isFalse,
       );
     });
   });

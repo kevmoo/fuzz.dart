@@ -148,12 +148,14 @@ jobs:
 
 ## Reproducing a CI Crash Locally
 
-When a CI run fails and uploads a `crash-<sha1>` artifact:
+When a CI run fails and uploads a `crash-<sha1>` artifact (note: local
+`fuzz run` executions write crashes to `.dart_tool/fuzz/crashes/crash-<sha1>` by
+default):
 
 ```bash
 # Re-run against the single crash reproducer file:
 dart pub global run fuzz run \
   --package-root=. \
-  --target=test/fuzz/my_parser_fuzz.dart \
-  -- crash-<sha1>
+  test/fuzz/my_parser_fuzz.dart \
+  crash-<sha1>
 ```
