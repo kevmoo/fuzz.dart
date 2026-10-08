@@ -1417,8 +1417,9 @@ int checkValue(int v) {
             );
         expect(withDepCached.cached, isTrue);
 
-        // 7. Deleting a generated output artifact (`auto.dict`) invalidates
-        // cache (`cached: false`) and regenerates it.
+        // 7. Deleting a generated output artifact (`auto.dict` or an individual
+        // instrumented `.dart` file) invalidates cache (`cached: false`) and
+        // regenerates it.
         File(withDepCached.dictionaryPath).deleteSync();
         final afterMissingDict =
             await PackageOverlayInstrumentor.instrumentPackage(
@@ -1427,6 +1428,17 @@ int checkValue(int v) {
             );
         expect(afterMissingDict.cached, isFalse);
         expect(File(afterMissingDict.dictionaryPath).existsSync(), isTrue);
+
+        final missingLibOut = File(
+          p.join(afterMissingDict.instrumentedLibDir, 'cached_pkg.dart'),
+        )..deleteSync();
+        final afterMissingLibOut =
+            await PackageOverlayInstrumentor.instrumentPackage(
+              packageRoot: pkgRoot,
+              additionalPackages: const ['dep_pkg'],
+            );
+        expect(afterMissingLibOut.cached, isFalse);
+        expect(missingLibOut.existsSync(), isTrue);
 
         // 8. CLI `fuzz instrument` reports "Reused cached" on hit and
         // "Instrumented" with `--force-instrument`.
@@ -1454,6 +1466,23 @@ int checkValue(int v) {
         expect(
           cliForced.stdout.toString(),
           contains('Instrumented package:cached_pkg'),
+        );
+
+        // 9. Moving/renaming the workspace directory invalidates cache (`cached:
+        // false`) so absolute `rootUri` paths in `.dart_tool/fuzz/package_config.json`
+        // are regenerated.
+        final movedWorkspace = p.join(d.sandbox, 'cache_workspace_moved');
+        Directory(p.join(d.sandbox, 'cache_workspace'))
+            .renameSync(movedWorkspace);
+        final movedPkgRoot = p.join(movedWorkspace, 'cached_pkg');
+        final afterMove = await PackageOverlayInstrumentor.instrumentPackage(
+          packageRoot: movedPkgRoot,
+          additionalPackages: const ['dep_pkg'],
+        );
+        expect(afterMove.cached, isFalse);
+        expect(
+          File(afterMove.overlayPackageConfigPath).readAsStringSync(),
+          contains('cache_workspace_moved'),
         );
       },
     );
