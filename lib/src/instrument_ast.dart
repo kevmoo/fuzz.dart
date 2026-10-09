@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -74,6 +75,15 @@ class AstInstrumentor {
   /// String and character literals harvested from instrumented ASTs for
   /// `libFuzzer` dictionary pre-seeding (`-dict=`).
   final Set<String> dictionaryTokens = {};
+
+  /// Per-file dictionary tokens harvested from instrumented ASTs, keyed by
+  /// manifest file identifier (`lib/...` or `package:<dep>/lib/...`).
+  final Map<String, Set<String>> dictionaryTokensByFile = {};
+
+  void _recordDictionaryToken(String filePath, String token) {
+    dictionaryTokens.add(token);
+    (dictionaryTokensByFile[filePath] ??= <String>{}).add(token);
+  }
 
   int _allocSite({
     required int offset,
@@ -764,7 +774,7 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     } else if (_isCandidateDictString(val) &&
         !_isDirectiveOrErrorLiteral(node) &&
         !_isInsideLargeLiteralCollection(node)) {
-      owner.dictionaryTokens.add(val);
+      owner._recordDictionaryToken(filePath, val);
     }
     super.visitSimpleStringLiteral(node);
   }
@@ -778,18 +788,20 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
             val == 0x0A ||
             val == 0x0D) &&
         _isComparisonOrSwitchLiteral(node)) {
-      owner.dictionaryTokens.add(String.fromCharCode(val));
+      owner._recordDictionaryToken(filePath, String.fromCharCode(val));
     }
     super.visitIntegerLiteral(node);
   }
 
   void _harvestRegExpTokens(String pattern) {
-    if (pattern.contains(r'\d')) owner.dictionaryTokens.add('0');
-    if (pattern.contains(r'\r\n')) owner.dictionaryTokens.add('\r\n');
+    if (pattern.contains(r'\d')) owner._recordDictionaryToken(filePath, '0');
+    if (pattern.contains(r'\r\n')) {
+      owner._recordDictionaryToken(filePath, '\r\n');
+    }
     for (final rawBranch in pattern.split('|')) {
       if (_plainRegexBranch.hasMatch(rawBranch) &&
           _isCandidateDictString(rawBranch)) {
-        owner.dictionaryTokens.add(rawBranch);
+        owner._recordDictionaryToken(filePath, rawBranch);
       }
     }
   }
@@ -938,6 +950,7 @@ typedef OverlayResult = ({
   int switchesInserted,
   int dictionaryTokensExtracted,
   bool cached,
+  Set<String>? reachableFiles,
 });
 
 typedef _OverlayCacheContext = ({
@@ -953,12 +966,18 @@ typedef _OverlayCacheContext = ({
 /// `<workDir>/instrumented/` and writes an overlay
 /// `<workDir>/package_config.json`.
 class PackageOverlayInstrumentor {
-  static const int _overlayCacheVersion = 1;
+  static const int _overlayCacheVersion = 2;
 
   /// Instruments `<packageRoot>/lib` (and any [additionalPackages] from
   /// `package_config.json`) into [workDir] (defaulting to
   /// `<packageRoot>/.dart_tool/fuzz/`) without modifying any tracked files in
   /// [packageRoot].
+  ///
+  /// When [targetPath] is provided, `auto.dict` and
+  /// `OverlayResult.reachableFiles` are scoped to the transitive `import`,
+  /// `export`, `part`, and `part of` graph starting from [targetPath] across
+  /// the instrumented packages, while keeping the AST overlay cache reusable
+  /// across different targets.
   ///
   /// When [force] is `false` (the default), reuses an existing up-to-date
   /// overlay in `<workDir>/` without re-parsing ASTs if no source, config, or
@@ -968,6 +987,7 @@ class PackageOverlayInstrumentor {
     String runtimeImport = 'package:fuzz/src/fuzz_runtime.dart',
     String? workDir,
     List<String> additionalPackages = const [],
+    String? targetPath,
     bool force = false,
   }) async {
     final rootDir = p.normalize(p.absolute(packageRoot));
@@ -1020,7 +1040,16 @@ class PackageOverlayInstrumentor {
 
     if (!force) {
       final cached = _tryLoadCachedOverlay(cacheCtx);
-      if (cached != null) return cached;
+      if (cached != null) {
+        return _applyTargetScope(
+          base: cached,
+          rootDir: rootDir,
+          fuzzDir: fuzzDir,
+          packageName: packageName,
+          depLibDirs: depLibDirs,
+          targetPath: targetPath,
+        );
+      }
     }
 
     final cacheFile = File(p.join(fuzzDir, 'overlay_cache.json'));
@@ -1058,6 +1087,7 @@ class PackageOverlayInstrumentor {
       fuzzDir: fuzzDir,
       packageName: packageName,
       sites: instrumentor.sites,
+      dictionaryTokensByFile: instrumentor.dictionaryTokensByFile,
     );
 
     final dictionaryPath = p.join(fuzzDir, 'auto.dict');
@@ -1071,7 +1101,7 @@ class PackageOverlayInstrumentor {
       additionalPackages: normalizedDeps.toSet(),
     );
 
-    final result = (
+    final uncachedResult = (
       packageName: packageName,
       overlayPackageConfigPath: overlayConfigPath,
       edgeManifestPath: edgeManifestPath,
@@ -1083,9 +1113,206 @@ class PackageOverlayInstrumentor {
       switchesInserted: instrumentor.switchesInserted,
       dictionaryTokensExtracted: instrumentor.dictionaryTokens.length,
       cached: false,
+      reachableFiles: null,
     );
-    _writeOverlayCache(cacheCtx, result);
-    return result;
+    _writeOverlayCache(cacheCtx, uncachedResult);
+    return _applyTargetScope(
+      base: uncachedResult,
+      rootDir: rootDir,
+      fuzzDir: fuzzDir,
+      packageName: packageName,
+      depLibDirs: depLibDirs,
+      targetPath: targetPath,
+    );
+  }
+
+  static OverlayResult _applyTargetScope({
+    required OverlayResult base,
+    required String rootDir,
+    required String fuzzDir,
+    required String packageName,
+    required Map<String, Directory> depLibDirs,
+    required String? targetPath,
+  }) {
+    final reachable = _computeReachableManifestFiles(
+      rootDir: rootDir,
+      packageName: packageName,
+      depLibDirs: depLibDirs,
+      targetPath: targetPath,
+    );
+    final tokens = _selectScopedDictionaryTokens(fuzzDir, reachable);
+    if (tokens != null) {
+      File(base.dictionaryPath).writeAsStringSync(formatFuzzDictionary(tokens));
+    }
+    return (
+      packageName: base.packageName,
+      overlayPackageConfigPath: base.overlayPackageConfigPath,
+      edgeManifestPath: base.edgeManifestPath,
+      dictionaryPath: base.dictionaryPath,
+      instrumentedLibDir: base.instrumentedLibDir,
+      filesInstrumented: base.filesInstrumented,
+      edgesInserted: base.edgesInserted,
+      comparesInserted: base.comparesInserted,
+      switchesInserted: base.switchesInserted,
+      dictionaryTokensExtracted:
+          tokens?.length ?? base.dictionaryTokensExtracted,
+      cached: base.cached,
+      reachableFiles: reachable,
+    );
+  }
+
+  static Set<String>? _selectScopedDictionaryTokens(
+    String fuzzDir,
+    Set<String>? reachableFiles,
+  ) {
+    final manifestFile = File(p.join(fuzzDir, 'edge_manifest.json'));
+    if (!manifestFile.existsSync()) return null;
+    final raw =
+        jsonDecode(manifestFile.readAsStringSync()) as Map<String, Object?>;
+    final byFile = raw['dictionaryTokensByFile'] as Map<String, Object?>?;
+    if (byFile == null) return null;
+    final out = <String>{};
+    for (final entry in byFile.entries) {
+      if (reachableFiles != null && !reachableFiles.contains(entry.key)) {
+        continue;
+      }
+      for (final tok in (entry.value as List<Object?>).cast<String>()) {
+        out.add(tok);
+      }
+    }
+    return out;
+  }
+
+  static Set<String>? _computeReachableManifestFiles({
+    required String rootDir,
+    required String packageName,
+    required Map<String, Directory> depLibDirs,
+    required String? targetPath,
+  }) {
+    if (targetPath == null || targetPath.isEmpty) return null;
+    final entryFile = File(
+      p.normalize(
+        p.isAbsolute(targetPath) ? targetPath : p.join(rootDir, targetPath),
+      ),
+    );
+    if (!entryFile.existsSync()) return null;
+
+    final libRoot = p.normalize(p.join(rootDir, 'lib'));
+    final visitedPaths = <String>{};
+    final reachableManifestKeys = <String>{};
+    final queue = Queue<File>()..add(entryFile);
+
+    while (queue.isNotEmpty) {
+      final current = queue.removeFirst();
+      final normPath = p.normalize(current.path);
+      if (!visitedPaths.add(normPath) || !current.existsSync()) continue;
+
+      final key = _manifestKeyForFile(normPath, libRoot, depLibDirs);
+      if (key != null) reachableManifestKeys.add(key);
+
+      _enqueueReachableNeighbors(
+        current: current,
+        normPath: normPath,
+        libRoot: libRoot,
+        packageName: packageName,
+        depLibDirs: depLibDirs,
+        queue: queue,
+      );
+    }
+    return reachableManifestKeys;
+  }
+
+  static void _enqueueReachableNeighbors({
+    required File current,
+    required String normPath,
+    required String libRoot,
+    required String packageName,
+    required Map<String, Directory> depLibDirs,
+    required Queue<File> queue,
+  }) {
+    for (final uri in _extractDirectiveUris(current)) {
+      final next = _resolveDirectiveUri(
+        uriStr: uri,
+        currentFilePath: normPath,
+        libRoot: libRoot,
+        packageName: packageName,
+        depLibDirs: depLibDirs,
+      );
+      if (next != null) queue.add(next);
+    }
+  }
+
+  static String? _manifestKeyForFile(
+    String normPath,
+    String libRoot,
+    Map<String, Directory> depLibDirs,
+  ) {
+    if (p.isWithin(libRoot, normPath)) {
+      final rel = p.relative(normPath, from: libRoot).replaceAll(r'\', '/');
+      return 'lib/$rel';
+    }
+    for (final entry in depLibDirs.entries) {
+      final depRoot = p.normalize(entry.value.path);
+      if (p.isWithin(depRoot, normPath)) {
+        final rel = p.relative(normPath, from: depRoot).replaceAll(r'\', '/');
+        return 'package:${entry.key}/lib/$rel';
+      }
+    }
+    return null;
+  }
+
+  static List<String> _extractDirectiveUris(File file) {
+    try {
+      final parsed = parseString(
+        content: file.readAsStringSync(),
+        path: file.path,
+        throwIfDiagnostics: false,
+      );
+      final rawUris = <String?>[
+        for (final directive in parsed.unit.directives) ...[
+          if (directive is UriBasedDirective) directive.uri.stringValue,
+          if (directive is NamespaceDirective)
+            for (final config in directive.configurations)
+              config.uri.stringValue,
+          if (directive is PartOfDirective) directive.uri?.stringValue,
+        ],
+      ];
+      return rawUris.nonNulls.where((u) => u.isNotEmpty).toList();
+    } on Object {
+      return const [];
+    }
+  }
+
+  static File? _resolveDirectiveUri({
+    required String uriStr,
+    required String currentFilePath,
+    required String libRoot,
+    required String packageName,
+    required Map<String, Directory> depLibDirs,
+  }) {
+    if (uriStr.startsWith('dart:')) return null;
+    if (uriStr.startsWith('package:')) {
+      final rest = uriStr.substring('package:'.length);
+      final slash = rest.indexOf('/');
+      if (slash <= 0) return null;
+      final pkg = rest.substring(0, slash);
+      final rel = rest.substring(slash + 1);
+      if (pkg == packageName) {
+        return File(p.normalize(p.join(libRoot, p.fromUri(Uri.parse(rel)))));
+      }
+      final depDir = depLibDirs[pkg];
+      if (depDir != null) {
+        return File(
+          p.normalize(p.join(depDir.path, p.fromUri(Uri.parse(rel)))),
+        );
+      }
+      return null;
+    }
+    final parsedUri = Uri.tryParse(uriStr);
+    if (parsedUri == null || parsedUri.hasScheme) return null;
+    return File(
+      p.normalize(p.join(p.dirname(currentFilePath), p.fromUri(parsedUri))),
+    );
   }
 
   static Future<Map<String, String>> _computeOverlayInputFingerprints(
@@ -1198,6 +1425,7 @@ class PackageOverlayInstrumentor {
         switchesInserted: raw['switchesInserted'] as int,
         dictionaryTokensExtracted: raw['dictionaryTokensExtracted'] as int,
         cached: true,
+        reachableFiles: null,
       );
     } on Object {
       return null;
@@ -1289,11 +1517,17 @@ class PackageOverlayInstrumentor {
     required String fuzzDir,
     required String packageName,
     required List<FuzzSiteEntry> sites,
+    required Map<String, Set<String>> dictionaryTokensByFile,
   }) {
     final manifestPath = p.join(fuzzDir, 'edge_manifest.json');
+    final sortedTokenFiles = dictionaryTokensByFile.keys.toList()..sort();
     final payload = <String, Object?>{
       'package': packageName,
       'totalSites': sites.length,
+      'dictionaryTokensByFile': {
+        for (final file in sortedTokenFiles)
+          file: (dictionaryTokensByFile[file]!.toList()..sort()),
+      },
       'sites': [
         for (final s in sites)
           {

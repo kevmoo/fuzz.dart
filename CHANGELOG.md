@@ -6,7 +6,7 @@
     in-memory `async` `FutureOr<void> fuzzTarget(Uint8List)` entrypoint
     synthesis (`fuzz_entrypoint.dart`), `--instrument-packages` support for
     delegated parser dependencies, `--work-dir` isolation for parallel runs, and
-    automatic AST dictionary token extraction (`auto.dict`, `--dict`,
+    target-scoped AST dictionary token extraction (`auto.dict`, `--dict`,
     `--[no-]auto-dict`).
   - Coverage-guided `libFuzzer` + `dart:ffi` runtime (`--mode=cgf`, default)
     with 8-bit edge counters, 512-slot `TraceCmp8WithPc` value-profile
@@ -16,8 +16,9 @@
     (`--mode=pure-dart`) with `-seed` control, `-dict` token mutation, corpus
     directory persistence, 64-bit word coverage scanning, and `libFuzzer`-style
     progress output.
-  - Per-file and per-line AST coverage reporting (`coverage_report.json` with
-    `uncoveredLines`).
+  - Target-scoped per-file and per-line AST coverage reporting
+    (`coverage_report.json` with `uncoveredLines` and
+    `omittedUnreachableFiles`).
   - Reusable parser fuzzing combinators (`verifyChunkSplitEquivalence`,
     `captureStreamZoneErrors`, `verifyNoUnescapedCrlf`, `fuzzBoundaryInts`,
     `fuzzBoundaryHexStrings`).

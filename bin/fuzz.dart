@@ -246,6 +246,7 @@ class _RunCommand extends Command<int> {
       workDir: fuzzDir,
       additionalPackages: additionalPackages,
       force: forceInstrument,
+      targetPath: targetPath,
     );
     final overlayAction = overlay.cached
         ? 'Reused cached AST overlay'
@@ -314,6 +315,7 @@ class _RunCommand extends Command<int> {
       fuzzDir: fuzzDir,
       edgeManifestPath: overlay.edgeManifestPath,
       siteHitsFile: siteHitsFile,
+      reachableFiles: overlay.reachableFiles,
     );
     return _resolveExitCode(code, File(crashesReportPath));
   }
@@ -473,12 +475,14 @@ void main(List<String> args) {
     required String fuzzDir,
     required String edgeManifestPath,
     required File siteHitsFile,
+    Set<String>? reachableFiles,
   }) {
     final manifestFile = File(edgeManifestPath);
     if (!siteHitsFile.existsSync() || !manifestFile.existsSync()) return;
     final report = computeCoverageReport(
       edgeManifestJson: manifestFile.readAsStringSync(),
       siteHits: siteHitsFile.readAsBytesSync(),
+      reachableFiles: reachableFiles,
     );
     final reportJsonPath = p.join(fuzzDir, 'coverage_report.json');
     File(reportJsonPath).writeAsStringSync(coverageReportToJson(report));

@@ -1574,5 +1574,204 @@ void main() {
         expect(vmRes.exitCode, equals(0), reason: '${vmRes.stderr}');
       },
     );
+
+    test('scopes auto.dict and coverage to target imports', () async {
+      await d.dir('scoped_pkg', [
+        d.file('pubspec.yaml', '''
+name: scoped_pkg
+environment:
+  sdk: ^3.7.0
+'''),
+        d.dir('.dart_tool', [
+          d.file(
+            'package_config.json',
+            jsonEncode({
+              'configVersion': 2,
+              'packages': [
+                {
+                  'name': 'scoped_pkg',
+                  'rootUri': '../',
+                  'packageUri': 'lib/',
+                  'languageVersion': '3.7',
+                },
+              ],
+            }),
+          ),
+        ]),
+        d.dir('lib', [
+          d.dir('src', [
+            d.file('jwt_parser.dart', '''
+import 'jwt_models.dart';
+export 'jwt_models.dart';
+
+bool parseJwt(String input) {
+  if (input.startsWith('BEARER_JWT')) {
+    return verifyAlg(input.substring(10));
+  }
+  return false;
+}
+'''),
+            d.file('jwt_models.dart', '''
+part 'jwt_part.dart';
+
+bool verifyAlg(String alg) {
+  if (alg == 'RS256') return _checkPart(alg);
+  return false;
+}
+'''),
+            d.file('jwt_part.dart', '''
+part of 'jwt_models.dart';
+
+bool _checkPart(String v) => v != 'JWT_PART_FORBIDDEN';
+'''),
+            d.file('unrelated_html.dart', '''
+int renderHtml(String tag) {
+  if (tag == 'UNRELATED_HTML_DIV') return 1;
+  if (tag == 'UNRELATED_HTML_SPAN') return 2;
+  return 0;
+}
+'''),
+            d.file('unrelated_search.dart', '''
+bool matchSearch(String query) {
+  if (query == 'UNRELATED_SEARCH_QUERY') return true;
+  return false;
+}
+'''),
+          ]),
+        ]),
+        d.dir('test', [
+          d.dir('fuzz', [
+            d.file('jwt_fuzz.dart', '''
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:scoped_pkg/src/jwt_parser.dart';
+
+void fuzzTarget(Uint8List bytes) {
+  parseJwt(utf8.decode(bytes, allowMalformed: true));
+}
+'''),
+            d.file('search_fuzz.dart', '''
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:scoped_pkg/src/unrelated_search.dart';
+
+void fuzzTarget(Uint8List bytes) {
+  matchSearch(utf8.decode(bytes, allowMalformed: true));
+}
+'''),
+          ]),
+        ]),
+      ]).create();
+
+      final pkgRoot = p.join(d.sandbox, 'scoped_pkg');
+      final fuzzBin = p.join(Directory.current.path, 'bin', 'fuzz.dart');
+      final runRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--mode=pure-dart',
+        '--runs=20',
+        'test/fuzz/jwt_fuzz.dart',
+      ]);
+      expect(
+        runRes.exitCode,
+        equals(0),
+        reason: 'stdout:\n${runRes.stdout}\nstderr:\n${runRes.stderr}',
+      );
+
+      // 1. auto.dict must contain only tokens from reachable files
+      // (jwt_parser.dart, jwt_models.dart, and part file jwt_part.dart).
+      final dictContent = File(
+        p.join(pkgRoot, '.dart_tool', 'fuzz', 'auto.dict'),
+      ).readAsStringSync();
+      expect(dictContent, contains('"BEARER_JWT"'));
+      expect(dictContent, contains('"RS256"'));
+      expect(dictContent, contains('"JWT_PART_FORBIDDEN"'));
+      expect(dictContent, isNot(contains('UNRELATED_HTML_DIV')));
+      expect(dictContent, isNot(contains('UNRELATED_HTML_SPAN')));
+      expect(dictContent, isNot(contains('UNRELATED_SEARCH_QUERY')));
+
+      // 2. coverage_report.json and stdout table must include only reachable
+      // files and report omitted unreachable files/sites.
+      final covJson = jsonDecode(
+        File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'coverage_report.json'))
+            .readAsStringSync(),
+      ) as Map<String, Object?>;
+      final reportedFiles = (covJson['files'] as List<Object?>)
+          .cast<Map<String, Object?>>()
+          .map((f) => f['file'] as String)
+          .toList();
+      expect(
+        reportedFiles,
+        equals([
+          'lib/src/jwt_models.dart',
+          'lib/src/jwt_parser.dart',
+          'lib/src/jwt_part.dart',
+        ]),
+      );
+      expect(covJson['omittedUnreachableFiles'], equals(2));
+      expect(covJson['omittedUnreachableSites'] as int, greaterThan(0));
+      expect(
+        runRes.stdout as String,
+        contains('Omitted 2 unreachable file(s)'),
+      );
+
+      // 3. Switching to a second target (`search_fuzz.dart`) reuses the
+      // cached AST overlay while re-scoping auto.dict and coverage_report.
+      final runSearchRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--mode=pure-dart',
+        '--runs=20',
+        'test/fuzz/search_fuzz.dart',
+      ]);
+      expect(
+        runSearchRes.exitCode,
+        equals(0),
+        reason:
+            'stdout:\n${runSearchRes.stdout}\nstderr:\n${runSearchRes.stderr}',
+      );
+      expect(
+        runSearchRes.stdout as String,
+        contains('Reused cached AST overlay for package:scoped_pkg'),
+      );
+      final searchDictContent = File(
+        p.join(pkgRoot, '.dart_tool', 'fuzz', 'auto.dict'),
+      ).readAsStringSync();
+      expect(searchDictContent, contains('"UNRELATED_SEARCH_QUERY"'));
+      expect(searchDictContent, isNot(contains('BEARER_JWT')));
+      expect(searchDictContent, isNot(contains('UNRELATED_HTML_DIV')));
+      final searchCovJson = jsonDecode(
+        File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'coverage_report.json'))
+            .readAsStringSync(),
+      ) as Map<String, Object?>;
+      final searchFiles = (searchCovJson['files'] as List<Object?>)
+          .cast<Map<String, Object?>>()
+          .map((f) => f['file'] as String)
+          .toList();
+      expect(searchFiles, equals(['lib/src/unrelated_search.dart']));
+      expect(searchCovJson['omittedUnreachableFiles'], equals(4));
+
+      // 4. Running `fuzz instrument` (no target) reuses the cached AST
+      // overlay (`Reused cached`) and restores the full-package auto.dict.
+      final instRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'instrument',
+        '--package-root=$pkgRoot',
+      ]);
+      expect(instRes.exitCode, equals(0), reason: '${instRes.stderr}');
+      expect(
+        instRes.stdout as String,
+        contains('Reused cached package:scoped_pkg'),
+      );
+      final fullDictContent = File(
+        p.join(pkgRoot, '.dart_tool', 'fuzz', 'auto.dict'),
+      ).readAsStringSync();
+      expect(fullDictContent, contains('"BEARER_JWT"'));
+      expect(fullDictContent, contains('"JWT_PART_FORBIDDEN"'));
+      expect(fullDictContent, contains('"UNRELATED_HTML_DIV"'));
+      expect(fullDictContent, contains('"UNRELATED_SEARCH_QUERY"'));
+    });
   });
 }

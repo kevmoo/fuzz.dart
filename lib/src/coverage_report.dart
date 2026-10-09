@@ -35,21 +35,39 @@ typedef PackageCoverageReport = ({
   int totalCompares,
   int bothBranchCompares,
   List<FileCoverageStat> files,
+  int omittedUnreachableFiles,
+  int omittedUnreachableSites,
 });
 
 /// Computes per-file and whole-package AST coverage from [edgeManifestJson]
 /// and the 65,536-byte [siteHits] bitmap recorded by `FuzzRuntime`.
+///
+/// When [reachableFiles] is provided, un-hit files outside the target's
+/// transitive import graph are excluded from `files` and summarized in
+/// `omittedUnreachableFiles`.
 PackageCoverageReport computeCoverageReport({
   required String edgeManifestJson,
   required Uint8List siteHits,
+  Set<String>? reachableFiles,
 }) {
   final root = jsonDecode(edgeManifestJson) as Map<String, Object?>;
   final packageName = (root['package'] as String?) ?? '<unknown>';
-  final rawSites = (root['sites'] as List<Object?>)
-      .cast<Map<String, Object?>>();
+  final byFile = _groupSitesByFile(root['sites'] as List<Object?>);
+  final sortedFiles = byFile.keys.toList()..sort();
+  final allStats = [
+    for (final file in sortedFiles)
+      _computeFileStat(file, byFile[file]!, siteHits),
+  ];
+  return _summarizeFileStats(
+    packageName: packageName,
+    allStats: allStats,
+    reachableFiles: reachableFiles,
+  );
+}
 
+Map<String, List<FuzzSiteEntry>> _groupSitesByFile(List<Object?> rawList) {
   final byFile = <String, List<FuzzSiteEntry>>{};
-  for (final raw in rawSites) {
+  for (final raw in rawList.cast<Map<String, Object?>>()) {
     final entry = (
       id: raw['id'] as int,
       file: raw['file'] as String,
@@ -59,7 +77,17 @@ PackageCoverageReport computeCoverageReport({
     );
     (byFile[entry.file] ??= <FuzzSiteEntry>[]).add(entry);
   }
+  return byFile;
+}
 
+PackageCoverageReport _summarizeFileStats({
+  required String packageName,
+  required List<FileCoverageStat> allStats,
+  required Set<String>? reachableFiles,
+}) {
+  final applyFilter =
+      reachableFiles != null &&
+      allStats.any((s) => reachableFiles.contains(s.file) || s.hitSites > 0);
   final fileStats = <FileCoverageStat>[];
   var pkgHitSites = 0;
   var pkgTotalSites = 0;
@@ -68,10 +96,17 @@ PackageCoverageReport computeCoverageReport({
   var pkgHitCompares = 0;
   var pkgTotalCompares = 0;
   var pkgBothCompares = 0;
+  var omittedFiles = 0;
+  var omittedSites = 0;
 
-  final sortedFiles = byFile.keys.toList()..sort();
-  for (final file in sortedFiles) {
-    final stat = _computeFileStat(file, byFile[file]!, siteHits);
+  for (final stat in allStats) {
+    if (applyFilter &&
+        !reachableFiles.contains(stat.file) &&
+        stat.hitSites == 0) {
+      omittedFiles++;
+      omittedSites += stat.totalSites;
+      continue;
+    }
     fileStats.add(stat);
     pkgHitSites += stat.hitSites;
     pkgTotalSites += stat.totalSites;
@@ -92,6 +127,8 @@ PackageCoverageReport computeCoverageReport({
     totalCompares: pkgTotalCompares,
     bothBranchCompares: pkgBothCompares,
     files: fileStats,
+    omittedUnreachableFiles: omittedFiles,
+    omittedUnreachableSites: omittedSites,
   );
 }
 
@@ -187,6 +224,12 @@ String formatCoverageTable(PackageCoverageReport report) {
       '${totalEdgeCol.padLeft(11)} '
       '${totalCmpCol.padLeft(14)}',
     );
+  if (report.omittedUnreachableFiles > 0) {
+    sb.writeln(
+      '  (Omitted ${report.omittedUnreachableFiles} unreachable file(s) '
+      'with ${report.omittedUnreachableSites} sites not imported by target)',
+    );
+  }
   return sb.toString();
 }
 
@@ -204,6 +247,8 @@ String coverageReportToJson(PackageCoverageReport report) =>
       'hitCompares': report.hitCompares,
       'totalCompares': report.totalCompares,
       'bothBranchCompares': report.bothBranchCompares,
+      'omittedUnreachableFiles': report.omittedUnreachableFiles,
+      'omittedUnreachableSites': report.omittedUnreachableSites,
       'files': [
         for (final f in report.files)
           {
