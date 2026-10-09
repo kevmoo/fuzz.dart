@@ -1555,6 +1555,8 @@ void main() {
         // condition tracking ($fuzzBool) without $fuzzExpr widening to `num`.
         expect(instrumented, contains(r'$fuzzBool(a,'));
         expect(instrumented, contains(r'$fuzzBool(b,'));
+        expect(instrumented, contains(r'? $fuzzExpr('));
+        expect(instrumented, contains('? x : y)'));
 
         final vmRes = await Process.run(Platform.resolvedExecutable, [
           '--packages=${res.overlayPackageConfigPath}',
