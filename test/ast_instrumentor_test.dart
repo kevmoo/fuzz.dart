@@ -832,7 +832,8 @@ void wrapFormatException(String label, String input) {}
     );
 
     test('fuzz run synthesizes fuzz_entrypoint.dart for zero-dependency '
-        'void fuzzTarget(Uint8List) targets', () async {
+        'Future<void> fuzzTarget(Uint8List) targets and records post-await '
+        'coverage', () async {
       await d.dir('zero_dep_pkg', [
         d.file('pubspec.yaml', '''
 name: zero_dep_pkg
@@ -857,10 +858,13 @@ environment:
         ]),
         d.dir('lib', [
           d.file('zero_dep_pkg.dart', '''
+import 'dart:async';
 import 'dart:typed_data';
 
-void checkBytes(Uint8List bytes) {
-  if (bytes.isNotEmpty && bytes[0] == 0x41) {
+Future<void> checkBytesAsync(Uint8List bytes) async {
+  final chunks = await Stream<Uint8List>.value(bytes).toList();
+  final first = chunks.first;
+  if (first.isNotEmpty && first[0] == 0x41) {
     return;
   }
 }
@@ -872,8 +876,8 @@ void checkBytes(Uint8List bytes) {
 import 'dart:typed_data';
 import 'package:zero_dep_pkg/zero_dep_pkg.dart';
 
-void fuzzTarget(Uint8List bytes) {
-  checkBytes(bytes);
+Future<void> fuzzTarget(Uint8List bytes) async {
+  await checkBytesAsync(bytes);
 }
 '''),
           ]),
@@ -902,6 +906,11 @@ void fuzzTarget(Uint8List bytes) {
             .existsSync(),
         isTrue,
       );
+      final covReport = jsonDecode(
+        File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'coverage_report.json'))
+            .readAsStringSync(),
+      ) as Map<String, Object?>;
+      expect(covReport['hitSites'] as int, greaterThan(0));
       expect(
         Directory(p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes'))
             .existsSync(),

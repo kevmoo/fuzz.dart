@@ -32,20 +32,22 @@ fuzzing combinators for Dart packages.
 
 > [!NOTE]
 >
-> `FuzzRuntime.runDriver` callbacks must execute **synchronously** within each
-> iteration because `LLVMFuzzerRunDriver` invokes the callback on the main
-> thread via a synchronous `dart:ffi` trampoline without returning to the Dart
-> event loop between inputs. For chunked converters, drive
-> `startChunkedConversion` (`addSlice` / `close`) synchronously inside
-> `runDriver`; for asynchronous `StreamTransformer` error-contract checks, use
-> `captureStreamZoneErrors` in `dart test`.
+> `fuzzTarget` may be synchronous (`void fuzzTarget(Uint8List data)`) or
+> asynchronous (`Future<void> fuzzTarget(Uint8List data) async`). When
+> `fuzzTarget` returns a `Future` or schedules microtasks (such as driving a
+> `Stream` parser over `Stream.value(data)`), `FuzzRuntime.runDriver` drains the
+> microtask queue synchronously within each `LLVMFuzzerRunDriver` callback so
+> post-`await` coverage and unhandled exceptions are attributed to the active
+> input. Only in-memory `Future`s and `Stream`s are supported inside `fuzz run`
+> (do not await real OS/network I/O).
 
 ```dart
 import 'dart:typed_data';
 import 'package:my_pkg/my_pkg.dart';
 
 // Zero-dependency target (no `package:fuzz` import needed in pubspec.yaml;
-// `fuzz run` synthesizes `.dart_tool/fuzz/fuzz_entrypoint.dart` automatically):
+// `fuzz run` synthesizes `.dart_tool/fuzz/fuzz_entrypoint.dart` automatically).
+// Can also be `Future<void> fuzzTarget(Uint8List data) async`.
 void fuzzTarget(Uint8List data) {
   try {
     parseMyFormat(data);

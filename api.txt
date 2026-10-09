@@ -16,10 +16,11 @@ package:fuzz/fuzz.dart:
     numCounters (static const getter: int)
     flushSiteHits (static method: void Function([String?]))
     init (static method: void Function({String? libraryPath, FuzzMode? mode}))
-    runDriver (static method: int Function(int Function(Uint8List), {List<String> fuzzerArgs, String? libraryPath, FuzzMode? mode}))
+    runDriver (static method: int Function(FutureOr<void> Function(Uint8List), {List<String> fuzzerArgs, String? libraryPath, FuzzMode? mode}))
   StreamContractResult (type alias<T> for ({bool completed, List<T> items, Object? streamError, Object? uncaughtZoneError}))
 dart:async:
   Future (referenced)
+  FutureOr (referenced)
   Stream (referenced)
   StreamTransformer (referenced)
 dart:core:

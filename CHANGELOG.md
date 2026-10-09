@@ -2,8 +2,9 @@
 
 - Initial version of `package:fuzz`:
   - Non-destructive `.dart_tool/fuzz/` AST overlay instrumentor
-    (`fuzz instrument` and `fuzz run`) with zero-dependency
-    `void fuzzTarget(Uint8List)` entrypoint synthesis (`fuzz_entrypoint.dart`),
+    (`fuzz instrument` and `fuzz run`) with zero-dependency synchronous and
+    in-memory `async` `FutureOr<void> fuzzTarget(Uint8List)` entrypoint
+    synthesis (`fuzz_entrypoint.dart`),
     `--instrument-packages` support for delegated parser dependencies,
     `--work-dir` isolation for parallel runs, and automatic AST dictionary token
     extraction (`auto.dict`, `--dict`, `--[no-]auto-dict`).

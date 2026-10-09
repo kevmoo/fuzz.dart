@@ -419,16 +419,12 @@ class _RunCommand extends Command<int> {
     final wrapperPath = p.join(fuzzDir, 'fuzz_entrypoint.dart');
     final targetUri = p.toUri(targetPath);
     File(wrapperPath).writeAsStringSync('''
-import 'dart:typed_data';
 import 'package:fuzz/fuzz.dart';
 import '$targetUri' as target;
 
 void main(List<String> args) {
   FuzzRuntime.runDriver(
-    (Uint8List data) {
-      target.fuzzTarget(data);
-      return 0;
-    },
+    target.fuzzTarget,
     fuzzerArgs: args,
   );
 }

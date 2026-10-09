@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
@@ -259,13 +261,13 @@ abstract final class FuzzRuntime {
   /// ([FuzzMode.cgf]) or the pure-Dart coverage-guided mutator
   /// ([FuzzMode.pureDart]).
   ///
-  /// Note: [target] must execute synchronously within each invocation because
-  /// `LLVMFuzzerRunDriver` invokes [target] via a synchronous FFI callback on
-  /// the main thread without returning to the Dart event loop between inputs.
-  /// For asynchronous `StreamTransformer` error-contract testing, use
-  /// [captureStreamZoneErrors].
+  /// Both synchronous (`void` / `int`) and in-memory asynchronous
+  /// (`Future<void>` / `Future<int>`) targets are supported. When [target]
+  /// returns a [Future] or schedules microtasks (such as reading from
+  /// `Stream.value(data)`), its microtask queue is drained synchronously within
+  /// each input invocation before returning to `libFuzzer`.
   static int runDriver(
-    int Function(Uint8List data) target, {
+    FutureOr<void> Function(Uint8List data) target, {
     List<String> fuzzerArgs = const ['-runs=100000'],
     FuzzMode? mode,
     String? libraryPath,
@@ -273,17 +275,20 @@ abstract final class FuzzRuntime {
     final resolvedMode = mode ?? _resolveModeFromEnv();
     init(mode: resolvedMode, libraryPath: libraryPath);
     final deduplicator = CrashDeduplicator.fromFuzzerArgs(fuzzerArgs);
+    final asyncRunner = _SyncAsyncRunner();
     try {
       final code = resolvedMode == FuzzMode.pureDart
           ? _runPureDartDriver(
               target,
               fuzzerArgs: fuzzerArgs,
               deduplicator: deduplicator,
+              asyncRunner: asyncRunner,
             )
           : _runNativeDriver(
               target,
               fuzzerArgs: fuzzerArgs,
               deduplicator: deduplicator,
+              asyncRunner: asyncRunner,
             );
       if (deduplicator.hasCrashes) {
         _finalizeCrashReport(deduplicator);
@@ -297,9 +302,10 @@ abstract final class FuzzRuntime {
   }
 
   static int _runNativeDriver(
-    int Function(Uint8List data) target, {
+    FutureOr<void> Function(Uint8List data) target, {
     required List<String> fuzzerArgs,
     required CrashDeduplicator deduplicator,
+    required _SyncAsyncRunner asyncRunner,
   }) {
     final allocate = _allocate!;
     final startFuzzer = _startFuzzerWithArgs!;
@@ -310,7 +316,7 @@ abstract final class FuzzRuntime {
       // Copy input bytes out of libFuzzer's scratch buffer so retained slices
       // never point to freed or overwritten native memory.
       final copy = Uint8List.fromList(data.asTypedList(size));
-      return _invokeTarget(target, copy, deduplicator);
+      return _invokeTarget(target, copy, deduplicator, asyncRunner);
     }
 
     final callable = NativeCallable<DartFuzzCallbackC>.isolateLocal(
@@ -337,12 +343,13 @@ abstract final class FuzzRuntime {
   }
 
   static int _invokeTarget(
-    int Function(Uint8List data) target,
+    FutureOr<void> Function(Uint8List data) target,
     Uint8List copy,
     CrashDeduplicator deduplicator,
+    _SyncAsyncRunner asyncRunner,
   ) {
     try {
-      return target(copy);
+      return asyncRunner.invoke(target, copy);
     } on Object catch (e, st) {
       if (!deduplicator.keepGoing) {
         _covMap.fillRange(0, numCounters, 0);
@@ -440,9 +447,10 @@ abstract final class FuzzRuntime {
   }
 
   static int _runPureDartDriver(
-    int Function(Uint8List data) target, {
+    FutureOr<void> Function(Uint8List data) target, {
     required List<String> fuzzerArgs,
     required CrashDeduplicator deduplicator,
+    required _SyncAsyncRunner asyncRunner,
   }) {
     final (:runs, :maxLen, :maxTotalTime, :seed, :dictPath, :corpusPaths) =
         _parsePureDartFlags(fuzzerArgs);
@@ -476,7 +484,7 @@ abstract final class FuzzRuntime {
             );
       _resetPerInputState();
       final copy = Uint8List.fromList(mutated);
-      final rc = _invokeTarget(target, copy, deduplicator);
+      final rc = _invokeTarget(target, copy, deduplicator, asyncRunner);
       completedRuns = i + 1;
       totalCovEdges = _recordPureDartOutcome(
         rc: rc,
@@ -1049,4 +1057,319 @@ bool $fuzzBool(bool val, int id) {
   FuzzRuntime._siteHits[id & 0xFFFF] |= val ? 1 : 2;
   _fuzzTransition(val ? id : ((id ^ 0x5555) & 0xFFFF));
   return val;
+}
+
+final class _SyncTimer implements Timer {
+  final void Function() _callback;
+  bool _isActive = true;
+  int _tick = 0;
+
+  _SyncTimer(this._callback);
+
+  @override
+  bool get isActive => _isActive;
+
+  @override
+  int get tick => _tick;
+
+  @override
+  void cancel() {
+    _isActive = false;
+  }
+
+  void fire() {
+    if (!_isActive) return;
+    _isActive = false;
+    _tick++;
+    _callback();
+  }
+}
+
+final class _SyncAsyncRunner {
+  static const int _maxSteps = 100000;
+  final ListQueue<void Function()> _microtasks = ListQueue<void Function()>();
+  final ListQueue<_SyncTimer> _timers = ListQueue<_SyncTimer>();
+  Object? _uncaughtError;
+  StackTrace? _uncaughtStack;
+
+  late final Zone _zone = Zone.current.fork(
+    specification: ZoneSpecification(
+      scheduleMicrotask: (self, parent, zone, f) {
+        _microtasks.addLast(zone.bindCallbackGuarded(f));
+      },
+      handleUncaughtError: (self, parent, zone, error, stackTrace) {
+        _uncaughtError ??= error;
+        _uncaughtStack ??= stackTrace;
+      },
+      createTimer: (self, parent, zone, duration, f) {
+        final timer = _SyncTimer(zone.bindCallbackGuarded(f));
+        if (duration <= Duration.zero) {
+          _microtasks.addLast(timer.fire);
+        } else {
+          _timers.addLast(timer);
+        }
+        return timer;
+      },
+      createPeriodicTimer: (self, parent, zone, period, f) => _SyncTimer(() {}),
+    ),
+  );
+
+  int invoke(FutureOr<void> Function(Uint8List data) target, Uint8List input) {
+    final fn = target as Object? Function(Uint8List);
+    try {
+      final result = _zone.runUnary(fn, input);
+      return _awaitSynchronously(result);
+    } finally {
+      _reset();
+    }
+  }
+
+  void _reset() {
+    _RootMicrotaskDrainer.drain();
+    for (final timer in _timers) {
+      timer.cancel();
+    }
+    _timers.clear();
+    _microtasks.clear();
+    _uncaughtError = null;
+    _uncaughtStack = null;
+  }
+
+  int _awaitSynchronously(Object? result) {
+    var futureCompleted = result is! Future<Object?>;
+    var completedValue = futureCompleted ? result : null;
+    Object? futureError;
+    StackTrace? futureStack;
+    if (result is Future<Object?>) {
+      _zone.run(() {
+        result.then(
+          (Object? val) {
+            futureCompleted = true;
+            completedValue = val;
+          },
+          onError: (Object e, StackTrace st) {
+            futureCompleted = true;
+            futureError = e;
+            futureStack = st;
+          },
+        );
+      });
+    }
+    _drainQueue(() => futureCompleted);
+    if (futureError != null) {
+      Error.throwWithStackTrace(futureError!, futureStack!);
+    }
+    if (_uncaughtError != null) {
+      Error.throwWithStackTrace(_uncaughtError!, _uncaughtStack!);
+    }
+    if (!futureCompleted) {
+      throw StateError(
+        'Async fuzzTarget did not complete after draining microtasks; '
+        'only in-memory Futures and Streams are supported.',
+      );
+    }
+    final val = completedValue;
+    return val is int ? val : 0;
+  }
+
+  void _drainQueue(bool Function() isDone) {
+    var steps = 0;
+    while (_uncaughtError == null) {
+      if (_microtasks.isNotEmpty) {
+        _checkStepLimit(++steps);
+        _microtasks.removeFirst()();
+        continue;
+      }
+      // Pre-completed SDK singleton Futures (such as `Future._nullFuture`
+      // returned by `StreamSubscription.cancel()` and `Future._falseFuture`
+      // returned by `StreamIterator.moveNext()`) are allocated in `Zone.root`
+      // at VM startup and schedule their `_awaitCompletedFuture` continuation
+      // on `Zone.root` rather than `Zone.current`. Drain any pending root
+      // immediate callback before checking `isDone()` so continuations (and
+      // any `unawaited` background work) resume inside `_zone`.
+      _RootMicrotaskDrainer.drain();
+      if (_microtasks.isNotEmpty) {
+        _checkStepLimit(++steps);
+        continue;
+      }
+      if (isDone() || _uncaughtError != null || _timers.isEmpty) return;
+      final timer = _timers.removeFirst();
+      if (timer.isActive) {
+        _checkStepLimit(++steps);
+        timer.fire();
+      }
+    }
+  }
+
+  static void _checkStepLimit(int steps) {
+    if (steps > _maxSteps) {
+      throw StateError('Async fuzzTarget exceeded $_maxSteps microtask steps.');
+    }
+  }
+}
+
+typedef _DartEnterScopeC = Void Function();
+typedef _DartEnterScopeDart = void Function();
+
+typedef _DartExitScopeC = Void Function();
+typedef _DartExitScopeDart = void Function();
+
+typedef _DartNewStringFromCStringC = Pointer<Void> Function(Pointer<Uint8>);
+typedef _DartNewStringFromCStringDart = Pointer<Void> Function(Pointer<Uint8>);
+
+typedef _DartLookupLibraryC = Pointer<Void> Function(Pointer<Void>);
+typedef _DartLookupLibraryDart = Pointer<Void> Function(Pointer<Void>);
+
+typedef _DartNewPersistentHandleC = Pointer<Void> Function(Pointer<Void>);
+typedef _DartNewPersistentHandleDart = Pointer<Void> Function(Pointer<Void>);
+
+typedef _DartHandleFromPersistentC = Pointer<Void> Function(Pointer<Void>);
+typedef _DartHandleFromPersistentDart = Pointer<Void> Function(Pointer<Void>);
+
+typedef _DartInvokeC = Pointer<Void> Function(
+  Pointer<Void> target,
+  Pointer<Void> name,
+  Int32 numberOfArguments,
+  Pointer<Pointer<Void>> arguments,
+);
+typedef _DartInvokeDart = Pointer<Void> Function(
+  Pointer<Void> target,
+  Pointer<Void> name,
+  int numberOfArguments,
+  Pointer<Pointer<Void>> arguments,
+);
+
+typedef _MallocC = Pointer<Uint8> Function(Size size);
+typedef _MallocDart = Pointer<Uint8> Function(int size);
+
+typedef _FreeC = Void Function(Pointer<Uint8> ptr);
+typedef _FreeDart = void Function(Pointer<Uint8> ptr);
+
+final class _RootMicrotaskDrainer {
+  static _RootMicrotaskDrainer? _instance;
+  static bool _unavailable = false;
+
+  final _DartEnterScopeDart _enterScope;
+  final _DartExitScopeDart _exitScope;
+  final _DartHandleFromPersistentDart _handleFromPersistent;
+  final _DartInvokeDart _invoke;
+  final Pointer<Void> _asyncLibPersistent;
+  final Pointer<Void> _ensureScheduleNamePersistent;
+  final Pointer<Void> _isolateLibPersistent;
+  final Pointer<Void> _runPendingNamePersistent;
+
+  _RootMicrotaskDrainer._(
+    this._enterScope,
+    this._exitScope,
+    this._handleFromPersistent,
+    this._invoke,
+    this._asyncLibPersistent,
+    this._ensureScheduleNamePersistent,
+    this._isolateLibPersistent,
+    this._runPendingNamePersistent,
+  );
+
+  static void drain() {
+    if (_unavailable) return;
+    var drainer = _instance;
+    if (drainer == null) {
+      drainer = _tryInit();
+      if (drainer == null) {
+        _unavailable = true;
+        return;
+      }
+      _instance = drainer;
+    }
+    drainer._drainPending();
+  }
+
+  static _RootMicrotaskDrainer? _tryInit() {
+    try {
+      final proc = DynamicLibrary.process();
+      final enterScope = proc
+          .lookupFunction<_DartEnterScopeC, _DartEnterScopeDart>(
+            'Dart_EnterScope',
+          );
+      final exitScope = proc
+          .lookupFunction<_DartExitScopeC, _DartExitScopeDart>(
+            'Dart_ExitScope',
+          );
+      final newString = proc
+          .lookupFunction<
+            _DartNewStringFromCStringC,
+            _DartNewStringFromCStringDart
+          >('Dart_NewStringFromCString');
+      final lookupLib = proc
+          .lookupFunction<_DartLookupLibraryC, _DartLookupLibraryDart>(
+            'Dart_LookupLibrary',
+          );
+      final newPersistent = proc
+          .lookupFunction<
+            _DartNewPersistentHandleC,
+            _DartNewPersistentHandleDart
+          >('Dart_NewPersistentHandle');
+      final handleFromPersistent = proc
+          .lookupFunction<
+            _DartHandleFromPersistentC,
+            _DartHandleFromPersistentDart
+          >('Dart_HandleFromPersistent');
+      final invoke = proc.lookupFunction<_DartInvokeC, _DartInvokeDart>(
+        'Dart_Invoke',
+      );
+      final malloc = proc.lookupFunction<_MallocC, _MallocDart>('malloc');
+      final free = proc.lookupFunction<_FreeC, _FreeDart>('free');
+
+      Pointer<Uint8> allocCString(String s) {
+        final bytes = utf8.encode(s);
+        final ptr = malloc(bytes.length + 1);
+        ptr.asTypedList(bytes.length).setAll(0, bytes);
+        ptr[bytes.length] = 0;
+        return ptr;
+      }
+
+      final asyncUrlC = allocCString('dart:async');
+      final ensureFnC = allocCString('_ensureScheduleImmediate');
+      final isolateUrlC = allocCString('dart:isolate');
+      final runPendingFnC = allocCString('_runPendingImmediateCallback');
+      enterScope();
+      try {
+        final asyncLib = lookupLib(newString(asyncUrlC));
+        final ensureFn = newString(ensureFnC);
+        final isolateLib = lookupLib(newString(isolateUrlC));
+        final runPendingFn = newString(runPendingFnC);
+        return _RootMicrotaskDrainer._(
+          enterScope,
+          exitScope,
+          handleFromPersistent,
+          invoke,
+          newPersistent(asyncLib),
+          newPersistent(ensureFn),
+          newPersistent(isolateLib),
+          newPersistent(runPendingFn),
+        );
+      } finally {
+        exitScope();
+        free(asyncUrlC);
+        free(ensureFnC);
+        free(isolateUrlC);
+        free(runPendingFnC);
+      }
+    } on Object {
+      return null;
+    }
+  }
+
+  void _drainPending() {
+    _enterScope();
+    try {
+      final asyncLib = _handleFromPersistent(_asyncLibPersistent);
+      final ensureFn = _handleFromPersistent(_ensureScheduleNamePersistent);
+      _invoke(asyncLib, ensureFn, 0, nullptr);
+      final isolateLib = _handleFromPersistent(_isolateLibPersistent);
+      final runPendingFn = _handleFromPersistent(_runPendingNamePersistent);
+      _invoke(isolateLib, runPendingFn, 0, nullptr);
+    } finally {
+      _exitScope();
+    }
+  }
 }
