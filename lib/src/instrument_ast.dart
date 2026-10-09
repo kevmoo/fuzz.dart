@@ -262,6 +262,7 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     if (unp is RethrowExpression) return;
     if (unp is! ThrowExpression && _alwaysThrows(unp)) return;
     if (unp is! ThrowExpression && _isInsideAssignmentRhs(expr)) return;
+    if (unp is! ThrowExpression && _isInsideNumericDispatchRhs(expr)) return;
     if (unp is! ThrowExpression && _isInVoidPermittingContext(expr)) return;
     if (preserveConditionFlow && unp is! ThrowExpression) {
       final finder = _ConditionFlowFinder();
@@ -327,6 +328,50 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     }
     return false;
   }
+
+  /// Returns `true` when [expr] is positioned inside the right-hand operand of
+  /// `+`, `-`, `*`, or `%` (or an argument to `remainder` / `clamp`), where
+  /// `int` operators impose downward context type `num` while still refining
+  /// their static return type to `int` only if the operand's static type stays
+  /// `int`. Wrapping [expr] in generic `$fuzzExpr<T>` under context `num`
+  /// would solve `T = num` and break outer `int` return/argument types.
+  static bool _isInsideNumericDispatchRhs(Expression expr) {
+    AstNode? cur = expr;
+    while (cur != null) {
+      final parent = cur.parent;
+      if (parent == null) return false;
+      if (_isNumericContextPassthrough(cur, parent)) {
+        cur = parent;
+        continue;
+      }
+      return _isNumericDispatchSink(cur, parent);
+    }
+    return false;
+  }
+
+  static bool _isNumericContextPassthrough(AstNode cur, AstNode parent) =>
+      switch (parent) {
+        ParenthesizedExpression() || SwitchExpressionCase() => true,
+        ConditionalExpression(:final condition) => cur != condition,
+        SwitchExpression(:final expression) => cur != expression,
+        CascadeExpression(:final target) => cur == target,
+        BinaryExpression(:final operator) =>
+          operator.type == TokenType.QUESTION_QUESTION,
+        _ => false,
+      };
+
+  static bool _isNumericDispatchSink(AstNode cur, AstNode parent) =>
+      switch (parent) {
+        BinaryExpression(:final rightOperand, :final operator)
+            when cur == rightOperand =>
+          operator.type == TokenType.PLUS ||
+              operator.type == TokenType.MINUS ||
+              operator.type == TokenType.STAR ||
+              operator.type == TokenType.PERCENT,
+        ArgumentList(parent: MethodInvocation(:final methodName)) =>
+          methodName.name == 'remainder' || methodName.name == 'clamp',
+        _ => false,
+      };
 
   static bool _isInVoidPermittingContext(Expression expr) {
     final unp = expr.unParenthesized;

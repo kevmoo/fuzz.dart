@@ -272,18 +272,25 @@ void main(List<String> args) {
       );
       final artifactsDir = Directory('${d.sandbox}/cgf_crashes')
         ..createSync(recursive: true);
+      final siteHitsPath = '${d.sandbox}/cgf_site_hits.bin';
       final scriptFile = File('${d.sandbox}/cgf_crash_harness.dart')
         ..writeAsStringSync('''
 import 'dart:typed_data';
 import 'package:fuzz/fuzz.dart';
+import 'package:fuzz/src/fuzz_runtime.dart';
 
 void main(List<String> args) {
   FuzzRuntime.runDriver(
     (Uint8List data) {
+      \$fuzzEdge(42);
+      // Allocate external-sized TypedData buffers to exercise VM heap state
+      // prior to libFuzzer's C std::exit(0) teardown.
+      final scratch = Uint8List(65536);
+      scratch[0] = data.isEmpty ? 1 : data[0];
       if (data.isEmpty) {
-        throw StateError('empty input crash');
+        throw StateError('empty input crash \${scratch[0]}');
       }
-      throw ArgumentError('non-empty input crash');
+      throw ArgumentError('non-empty input crash \${scratch[0]}');
     },
     mode: FuzzMode.cgf,
     libraryPath: r'$libPath',
@@ -294,14 +301,19 @@ void main(List<String> args) {
 
       final pkgConfig =
           '${Directory.current.path}/.dart_tool/package_config.json';
-      final result = await Process.run(Platform.resolvedExecutable, [
-        '--packages=$pkgConfig',
-        scriptFile.path,
-        '-runs=10',
-        '-artifact_prefix=${artifactsDir.path}/',
-      ]);
+      final result = await Process.run(
+        Platform.resolvedExecutable,
+        [
+          '--packages=$pkgConfig',
+          scriptFile.path,
+          '-runs=25',
+          '-artifact_prefix=${artifactsDir.path}/',
+        ],
+        environment: {'FUZZ_SITE_HITS_PATH': siteHitsPath},
+      );
       expect(result.exitCode, equals(77), reason: '${result.stderr}');
       final stderrStr = result.stderr as String;
+      expect(stderrStr, isNot(contains('unreachable code')));
       expect(stderrStr, contains('DEDUPLICATED CRASH SUMMARY'));
       expect(stderrStr, contains('StateError'));
       expect(stderrStr, contains('ArgumentError'));
@@ -311,6 +323,12 @@ void main(List<String> args) {
           .where((f) => f.path.contains('crash-'))
           .toList();
       expect(crashFiles, hasLength(2));
+
+      // Verify C++ FlushSiteHitsAtExit flushed FUZZ_SITE_HITS_PATH without
+      // re-entering the Dart VM during std::atexit.
+      final siteHitsBytes = File(siteHitsPath).readAsBytesSync();
+      expect(siteHitsBytes, hasLength(FuzzRuntime.numCounters));
+      expect(siteHitsBytes[42], equals(1));
     });
   });
 }

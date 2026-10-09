@@ -6,11 +6,12 @@
 #include <utility>
 
 using DartFuzzCallback = int (*)(const uint8_t* Data, size_t Size);
-using DartAtExitCallback = int (*)();
 static DartFuzzCallback g_dart_callback = nullptr;
-static DartAtExitCallback g_dart_atexit_callback = nullptr;
 static const uint8_t* g_site_hits = nullptr;
 static size_t g_site_hits_size = 0;
+static int g_exit_code_override = 0;
+static uint8_t* g_crash_summary = nullptr;
+static size_t g_crash_summary_size = 0;
 static bool g_atexit_registered = false;
 
 static void FlushSiteHitsAtExit() {
@@ -24,14 +25,13 @@ static void FlushSiteHitsAtExit() {
       }
     }
   }
-  if (g_dart_atexit_callback != nullptr) {
-    DartAtExitCallback cb = g_dart_atexit_callback;
-    g_dart_atexit_callback = nullptr;
-    int exit_override = cb();
-    if (exit_override != 0) {
-      std::fflush(nullptr);
-      std::_Exit(exit_override);
-    }
+  if (g_crash_summary != nullptr && g_crash_summary_size > 0) {
+    std::fwrite(g_crash_summary, 1, g_crash_summary_size, stderr);
+    std::fflush(stderr);
+  }
+  if (g_exit_code_override != 0) {
+    std::fflush(nullptr);
+    std::_Exit(g_exit_code_override);
   }
 }
 
@@ -103,9 +103,21 @@ void RegisterSiteHits(const uint8_t* Start, size_t Size) {
   EnsureAtExitRegistered();
 }
 
-void RegisterAtExitCallback(DartAtExitCallback callback) {
-  g_dart_atexit_callback = callback;
+uint8_t* PrepareAtExitCrashSummary(int exit_code, size_t summary_size) {
+  g_exit_code_override = exit_code;
+  if (g_crash_summary != nullptr) {
+    std::free(g_crash_summary);
+    g_crash_summary = nullptr;
+  }
+  g_crash_summary_size = 0;
+  if (summary_size > 0) {
+    g_crash_summary = static_cast<uint8_t*>(std::malloc(summary_size));
+    if (g_crash_summary != nullptr) {
+      g_crash_summary_size = summary_size;
+    }
+  }
   EnsureAtExitRegistered();
+  return g_crash_summary;
 }
 
 void TraceCmp8(uint64_t Arg1, uint64_t Arg2) {
