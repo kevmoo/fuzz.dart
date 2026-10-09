@@ -1,6 +1,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -95,7 +96,6 @@ void main() {
               foundLhsMagic = true;
             }
           }
-          return 0;
         },
         mode: FuzzMode.pureDart,
         fuzzerArgs: const ['-runs=3000', '-max_len=16'],
@@ -115,7 +115,6 @@ void main() {
         (Uint8List data) {
           seenRun1.add(data.toList());
           $fuzzEdge(data.isEmpty ? 1 : (data.first + 2));
-          return 0;
         },
         mode: FuzzMode.pureDart,
         fuzzerArgs: ['-runs=15', '-seed=42', corpusPath],
@@ -146,7 +145,6 @@ void main() {
         (Uint8List data) {
           seenRun2.add(data.toList());
           $fuzzEdge(data.isEmpty ? 1 : (data.first + 2));
-          return 0;
         },
         mode: FuzzMode.pureDart,
         fuzzerArgs: ['-runs=15', '-seed=42', corpusPath2],
@@ -217,12 +215,91 @@ void main(List<String> args) {
           } else {
             $fuzzEdge(1);
           }
-          return 0;
         },
         mode: FuzzMode.pureDart,
         fuzzerArgs: ['-runs=80', '-seed=7', '-dict=${dictFile.path}'],
       );
       expect(matchedMagic, isTrue);
+    });
+
+    test('drives async Future/Stream targets synchronously per input, '
+        'recording post-await coverage and catching '
+        'uncompleted Completers', () async {
+      FuzzRuntime.init(mode: FuzzMode.pureDart);
+      $fuzzSiteHits[301] = 0;
+
+      var solvedPostAwaitMagic = false;
+      var unawaitedPostCancelRan = false;
+      FuzzRuntime.runDriver(
+        (Uint8List data) async {
+          final sub = Stream<Uint8List>.value(data).listen((_) {});
+          await sub.cancel();
+          final emptyIter = StreamIterator(const Stream<int>.empty());
+          while (await emptyIter.moveNext()) {}
+          await emptyIter.cancel();
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          final chunks = await Stream<Uint8List>.value(data).toList();
+          final merged = chunks.isEmpty ? Uint8List(0) : chunks.first;
+          $fuzzEdge(301);
+          if ($fuzzGe(merged.length, 4, 302)) {
+            final str = String.fromCharCodes(merged.take(4));
+            if ($fuzzEq(str, 'ASYN', 303)) {
+              solvedPostAwaitMagic = true;
+            }
+          }
+          unawaited(() async {
+            final s = Stream<int>.value(1).listen((_) {});
+            await s.cancel();
+            unawaitedPostCancelRan = true;
+          }());
+        },
+        mode: FuzzMode.pureDart,
+        fuzzerArgs: const ['-runs=1500', '-max_len=16'],
+      );
+      expect($fuzzSiteHits[301], equals(1));
+      expect(solvedPostAwaitMagic, isTrue);
+      expect(unawaitedPostCancelRan, isTrue);
+
+      // An async target that awaits an uncompleted Completer (without a timer)
+      // must fail deterministically with exitCode 77 rather than silently
+      // succeeding.
+      final artifactsDir = Directory('${d.sandbox}/stalled_async')
+        ..createSync(recursive: true);
+      final stalledScript = File('${d.sandbox}/stalled_harness.dart')
+        ..writeAsStringSync('''
+import 'dart:async';
+import 'dart:typed_data';
+import 'package:fuzz/fuzz.dart';
+
+void main(List<String> args) {
+  FuzzRuntime.runDriver(
+    (Uint8List data) async {
+      await Completer<void>().future;
+    },
+    mode: FuzzMode.pureDart,
+    fuzzerArgs: args,
+  );
+}
+''');
+      final pkgConfig =
+          '${Directory.current.path}/.dart_tool/package_config.json';
+      final stalledRes = await Process.run(Platform.resolvedExecutable, [
+        '--packages=$pkgConfig',
+        stalledScript.path,
+        '-runs=1',
+        '-artifact_prefix=${artifactsDir.path}/',
+      ]);
+      expect(stalledRes.exitCode, equals(77), reason: '${stalledRes.stderr}');
+      expect(
+        stalledRes.stderr as String,
+        contains('Async fuzzTarget did not complete after draining microtasks'),
+      );
+      final stalledCrashes = artifactsDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.contains('crash-'))
+          .toList();
+      expect(stalledCrashes, hasLength(1));
     });
   });
 
@@ -259,7 +336,8 @@ void main(List<String> args) {
     });
 
     test('exits with code 77 and prints DEDUPLICATED CRASH SUMMARY when '
-        'FuzzRuntime.runDriver is called directly in FuzzMode.cgf', () async {
+        'FuzzRuntime.runDriver is called directly in FuzzMode.cgf (including '
+        'async Stream targets and unawaited microtask errors)', () async {
       final clang = NativeFuzzerBuilder.findClangExecutable();
       if (clang == null) {
         markTestSkipped('clang++ not installed on this runner');
@@ -275,22 +353,30 @@ void main(List<String> args) {
       final siteHitsPath = '${d.sandbox}/cgf_site_hits.bin';
       final scriptFile = File('${d.sandbox}/cgf_crash_harness.dart')
         ..writeAsStringSync('''
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:fuzz/fuzz.dart';
 import 'package:fuzz/src/fuzz_runtime.dart';
 
 void main(List<String> args) {
   FuzzRuntime.runDriver(
-    (Uint8List data) {
+    (Uint8List data) async {
       \$fuzzEdge(42);
+      final items = await Stream<Uint8List>.value(data).toList();
+      \$fuzzEdge(43);
       // Allocate external-sized TypedData buffers to exercise VM heap state
       // prior to libFuzzer's C std::exit(0) teardown.
       final scratch = Uint8List(65536);
-      scratch[0] = data.isEmpty ? 1 : data[0];
-      if (data.isEmpty) {
-        throw StateError('empty input crash \${scratch[0]}');
+      final payload = items.first;
+      scratch[0] = payload.isEmpty ? 1 : payload[0];
+      if (payload.isEmpty) {
+        throw StateError('empty async input crash \${scratch[0]}');
       }
-      throw ArgumentError('non-empty input crash \${scratch[0]}');
+      unawaited(
+        Future<void>.microtask(() {
+          throw ArgumentError('unawaited microtask crash \${scratch[0]}');
+        }),
+      );
     },
     mode: FuzzMode.cgf,
     libraryPath: r'$libPath',
@@ -324,11 +410,12 @@ void main(List<String> args) {
           .toList();
       expect(crashFiles, hasLength(2));
 
-      // Verify C++ FlushSiteHitsAtExit flushed FUZZ_SITE_HITS_PATH without
-      // re-entering the Dart VM during std::atexit.
+      // Verify C++ FlushSiteHitsAtExit flushed FUZZ_SITE_HITS_PATH including
+      // post-await edge 43 without re-entering the Dart VM during std::atexit.
       final siteHitsBytes = File(siteHitsPath).readAsBytesSync();
       expect(siteHitsBytes, hasLength(FuzzRuntime.numCounters));
       expect(siteHitsBytes[42], equals(1));
+      expect(siteHitsBytes[43], equals(1));
     });
   });
 }

@@ -19,7 +19,9 @@ flowchart LR
 
 1. **Zero-Dependency Target (`test/fuzz/<name>_fuzz.dart`)**:
    - Your target script defines a top-level `void fuzzTarget(Uint8List bytes)`
-     function using only `dart:typed_data` and your package's own imports.
+     (or `Future<void> fuzzTarget(Uint8List bytes)` for in-memory `Future` and
+     `Stream` parsers) function using only `dart:typed_data` and your package's
+     own imports.
    - Because `test/fuzz/<name>_fuzz.dart` does not import
      `package:fuzz/fuzz.dart`, your package's `pubspec.yaml` requires **zero
      fuzzing dependencies**, keeping `dart analyze --fatal-infos`,
@@ -36,10 +38,10 @@ flowchart LR
      `.dart_tool/fuzz/package_config.json` that automatically maps
      `package:fuzz`.
 3. **Driver Entrypoint Synthesis (`.dart_tool/fuzz/fuzz_entrypoint.dart`)**:
-   - When the target script defines `void fuzzTarget(Uint8List bytes)` without
+   - When the target script defines `fuzzTarget(Uint8List bytes)` without
      calling `FuzzRuntime.runDriver` directly, `fuzz run` synthesizes
-     `.dart_tool/fuzz/fuzz_entrypoint.dart` wrapping `target.fuzzTarget(data)`
-     inside `FuzzRuntime.runDriver`.
+     `.dart_tool/fuzz/fuzz_entrypoint.dart` passing `target.fuzzTarget` to
+     `FuzzRuntime.runDriver`.
    - Advanced targets that use `package:fuzz/fuzz.dart` combinators or custom
      `FuzzRuntime.runDriver` callbacks can still define
      `main(List<String> args)` directly.
