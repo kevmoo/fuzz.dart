@@ -339,33 +339,39 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     AstNode? cur = expr;
     while (cur != null) {
       final parent = cur.parent;
-      if (parent is ParenthesizedExpression ||
-          parent is SwitchExpressionCase ||
-          (parent is ConditionalExpression && cur != parent.condition) ||
-          (parent is SwitchExpression && cur != parent.expression) ||
-          (parent is CascadeExpression && cur == parent.target) ||
-          (parent is BinaryExpression &&
-              parent.operator.type == TokenType.QUESTION_QUESTION)) {
+      if (parent == null) return false;
+      if (_isNumericContextPassthrough(cur, parent)) {
         cur = parent;
         continue;
       }
-      if (parent is BinaryExpression && cur == parent.rightOperand) {
-        final op = parent.operator.type;
-        return op == TokenType.PLUS ||
-            op == TokenType.MINUS ||
-            op == TokenType.STAR ||
-            op == TokenType.PERCENT;
-      }
-      if (parent is ArgumentList) {
-        if (parent.parent case MethodInvocation(:final methodName)) {
-          final name = methodName.name;
-          return name == 'remainder' || name == 'clamp';
-        }
-      }
-      return false;
+      return _isNumericDispatchSink(cur, parent);
     }
     return false;
   }
+
+  static bool _isNumericContextPassthrough(AstNode cur, AstNode parent) =>
+      switch (parent) {
+        ParenthesizedExpression() || SwitchExpressionCase() => true,
+        ConditionalExpression(:final condition) => cur != condition,
+        SwitchExpression(:final expression) => cur != expression,
+        CascadeExpression(:final target) => cur == target,
+        BinaryExpression(:final operator) =>
+          operator.type == TokenType.QUESTION_QUESTION,
+        _ => false,
+      };
+
+  static bool _isNumericDispatchSink(AstNode cur, AstNode parent) =>
+      switch (parent) {
+        BinaryExpression(:final rightOperand, :final operator)
+            when cur == rightOperand =>
+          operator.type == TokenType.PLUS ||
+              operator.type == TokenType.MINUS ||
+              operator.type == TokenType.STAR ||
+              operator.type == TokenType.PERCENT,
+        ArgumentList(parent: MethodInvocation(:final methodName)) =>
+          methodName.name == 'remainder' || methodName.name == 'clamp',
+        _ => false,
+      };
 
   static bool _isInVoidPermittingContext(Expression expr) {
     final unp = expr.unParenthesized;
