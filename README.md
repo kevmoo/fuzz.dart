@@ -181,7 +181,10 @@ switch case, and comparison site back to its source file, 1-based line and
 column, and syntax kind.
 
 At the end of each `fuzz run` invocation (including `-max_total_time` exits and
-crash terminations), `fuzz` prints a per-file ASCII coverage table and writes
+crash terminations), `fuzz` walks the transitive `import`, `export`, `part`, and
+`part of` graph starting from `<target.dart>` (filtering out un-imported files
+from both `.dart_tool/fuzz/auto.dict` and the coverage report while keeping the
+AST overlay cache reusable), prints a per-file ASCII coverage table, and writes
 `.dart_tool/fuzz/coverage_report.json` listing exact `uncoveredLines`
 (`line:column` positions of unreached branches) so you can see where fuzzing
 plateaued and add targeted seeds or unit tests.
