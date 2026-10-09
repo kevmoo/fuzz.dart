@@ -40,8 +40,8 @@ flowchart LR
 3. **Driver Entrypoint Synthesis (`.dart_tool/fuzz/fuzz_entrypoint.dart`)**:
    - When the target script defines `fuzzTarget(Uint8List bytes)` without
      calling `FuzzRuntime.runDriver` directly, `fuzz run` synthesizes
-     `.dart_tool/fuzz/fuzz_entrypoint.dart` passing `target.fuzzTarget`
-     to `FuzzRuntime.runDriver`.
+     `.dart_tool/fuzz/fuzz_entrypoint.dart` passing `target.fuzzTarget` to
+     `FuzzRuntime.runDriver`.
    - Advanced targets that use `package:fuzz/fuzz.dart` combinators or custom
      `FuzzRuntime.runDriver` callbacks can still define
      `main(List<String> args)` directly.
