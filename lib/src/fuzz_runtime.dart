@@ -30,11 +30,13 @@ typedef _RegisterDartCountersDart = void Function(
   int size,
 );
 
-typedef _RegisterAtExitC = Void Function(
-  Pointer<NativeFunction<Int32 Function()>> callback,
+typedef _PrepareAtExitCrashSummaryC = Pointer<Uint8> Function(
+  Int32 exitCode,
+  Size summarySize,
 );
-typedef _RegisterAtExitDart = void Function(
-  Pointer<NativeFunction<Int32 Function()>> callback,
+typedef _PrepareAtExitCrashSummaryDart = Pointer<Uint8> Function(
+  int exitCode,
+  int summarySize,
 );
 
 typedef _TraceCmp8WithPcC = Void Function(
@@ -82,7 +84,7 @@ abstract final class FuzzRuntime {
   static _TraceMemcmpDart? _traceMemcmp;
   static _StartFuzzerWithArgsDart? _startFuzzerWithArgs;
   static _AllocateCountersDart? _allocate;
-  static _RegisterAtExitDart? _registerAtExitCallback;
+  static _PrepareAtExitCrashSummaryDart? _prepareAtExitCrashSummary;
 
   static const int _numSlots = 16;
   static const int _slotStride = 16;
@@ -132,7 +134,7 @@ abstract final class FuzzRuntime {
       _s2View = Uint8List(_scratchBytesLen);
       _traceCmp8WithPc = null;
       _traceMemcmp = null;
-      _registerAtExitCallback = null;
+      _prepareAtExitCrashSummary = null;
       _initializedMode = FuzzMode.pureDart;
       return;
     }
@@ -152,10 +154,11 @@ abstract final class FuzzRuntime {
         .lookupFunction<_RegisterDartCountersC, _RegisterDartCountersDart>(
           'RegisterSiteHits',
         );
-    _registerAtExitCallback = lib
-        .lookupFunction<_RegisterAtExitC, _RegisterAtExitDart>(
-          'RegisterAtExitCallback',
-        );
+    _prepareAtExitCrashSummary = lib
+        .lookupFunction<
+          _PrepareAtExitCrashSummaryC,
+          _PrepareAtExitCrashSummaryDart
+        >('PrepareAtExitCrashSummary', isLeaf: true);
     _traceCmp8WithPc = lib
         .lookupFunction<_TraceCmp8WithPcC, _TraceCmp8WithPcDart>(
           'TraceCmp8WithPc',
@@ -300,7 +303,7 @@ abstract final class FuzzRuntime {
   }) {
     final allocate = _allocate!;
     final startFuzzer = _startFuzzerWithArgs!;
-    final registerAtExit = _registerAtExitCallback!;
+    final prepareAtExit = _prepareAtExitCrashSummary!;
 
     int callbackImpl(Pointer<Uint8> data, int size) {
       _resetPerInputState();
@@ -310,17 +313,11 @@ abstract final class FuzzRuntime {
       return _invokeTarget(target, copy, deduplicator);
     }
 
-    int atExitImpl() => _onNativeDriverAtExit(deduplicator);
-
     final callable = NativeCallable<DartFuzzCallbackC>.isolateLocal(
       callbackImpl,
       exceptionalReturn: 0,
     );
-    final atExitCallable = NativeCallable<Int32 Function()>.isolateLocal(
-      atExitImpl,
-      exceptionalReturn: 0,
-    );
-    registerAtExit(atExitCallable.nativeFunction);
+    prepareAtExit(0, 0);
     try {
       final allArgs = <String>['dart_fuzzer', ...fuzzerArgs];
       final argvPtr = allocate((allArgs.length + 1) * sizeOf<Pointer<Uint8>>())
@@ -334,17 +331,9 @@ abstract final class FuzzRuntime {
       }
       return startFuzzer(callable.nativeFunction, allArgs.length, argvPtr);
     } finally {
-      registerAtExit(nullptr);
-      atExitCallable.close();
+      prepareAtExit(0, 0);
       callable.close();
     }
-  }
-
-  static int _onNativeDriverAtExit(CrashDeduplicator deduplicator) {
-    flushSiteHits();
-    if (!deduplicator.hasCrashes) return 0;
-    _finalizeCrashReport(deduplicator);
-    return 77;
   }
 
   static int _invokeTarget(
@@ -364,7 +353,6 @@ abstract final class FuzzRuntime {
       // Zero _covMap after _recordKeepGoingCrash so instrumented exception
       // .toString() methods cannot repopulate coverage counters.
       _covMap.fillRange(0, numCounters, 0);
-      flushSiteHits();
       return -1;
     }
   }
@@ -391,14 +379,26 @@ abstract final class FuzzRuntime {
     }
     final hits = deduplicator.totalHits;
     if (isNew || isMinimized || (hits & (hits - 1)) == 0) {
-      _syncCrashReportFile(deduplicator);
+      _syncCrashReportState(deduplicator);
     }
   }
 
-  static void _syncCrashReportFile(CrashDeduplicator deduplicator) {
+  static void _syncCrashReportState(CrashDeduplicator deduplicator) {
     final reportPath = Platform.environment['FUZZ_CRASHES_REPORT_PATH'];
-    if (reportPath != null && reportPath.isNotEmpty) {
+    final hasReportPath = reportPath != null && reportPath.isNotEmpty;
+    if (hasReportPath) {
       deduplicator.writeReportJson(reportPath);
+    }
+    final prepareAtExit = _prepareAtExitCrashSummary;
+    if (prepareAtExit == null) return;
+    if (hasReportPath) {
+      prepareAtExit(77, 0);
+      return;
+    }
+    final summaryBytes = utf8.encode(deduplicator.formatSummaryReport());
+    final ptr = prepareAtExit(77, summaryBytes.length);
+    if (ptr != nullptr) {
+      ptr.asTypedList(summaryBytes.length).setAll(0, summaryBytes);
     }
   }
 

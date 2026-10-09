@@ -1486,5 +1486,79 @@ int checkValue(int v) {
         );
       },
     );
+
+    test(r'preserves int static type on chained arithmetic with conditional, '
+        r'switch, and ?? expressions on the RHS of +, -, *, %, remainder, and clamp', () async {
+      await d.dir('num_rhs_pkg', [
+        d.file('pubspec.yaml', '''
+name: num_rhs_pkg
+environment:
+  sdk: ^3.7.0
+'''),
+        d.dir('.dart_tool', [
+          d.file(
+            'package_config.json',
+            jsonEncode({
+              'configVersion': 2,
+              'packages': [
+                {
+                  'name': 'num_rhs_pkg',
+                  'rootUri': '../',
+                  'packageUri': 'lib/',
+                  'languageVersion': '3.7',
+                },
+              ],
+            }),
+          ),
+        ]),
+        d.dir('lib', [
+          d.file('num_rhs_pkg.dart', '''
+int computeCount(bool a, bool b, int x, int y, int? maybeZ, int len) =>
+    (a ? 1 : 0) +
+    (b ? x : y) +
+    (switch (a) { true => x, false => 0 }) +
+    (maybeZ ?? (b ? 1 : 0)) -
+    (a ? 0 : 1) +
+    (x * (b ? 2 : 1)) +
+    (x % (a ? 3 : 2)) +
+    x.remainder(b ? 5 : 3) +
+    x.clamp(a ? 0 : 1, b ? 10 : 20) +
+    len;
+'''),
+        ]),
+        d.dir('test', [
+          d.file('run_check.dart', '''
+import 'package:num_rhs_pkg/num_rhs_pkg.dart';
+
+void main() {
+  final actual = computeCount(true, false, 4, 2, null, 7);
+  if (actual != 18) {
+    throw StateError('Expected 18, got \$actual');
+  }
+}
+'''),
+        ]),
+      ]).create();
+
+      final pkgRoot = p.join(d.sandbox, 'num_rhs_pkg');
+      final res = await PackageOverlayInstrumentor.instrumentPackage(
+        packageRoot: pkgRoot,
+      );
+      final instrumented = File(
+        p.join(res.instrumentedLibDir, 'num_rhs_pkg.dart'),
+      ).readAsStringSync();
+
+      // LHS of the first `+` (`a ? 1 : 0`) has empty context and is wrapped
+      // in $fuzzExpr, whereas RHS conditional/switch/clamp branches keep
+      // condition tracking ($fuzzBool) without $fuzzExpr widening to `num`.
+      expect(instrumented, contains(r'$fuzzBool(a,'));
+      expect(instrumented, contains(r'$fuzzBool(b,'));
+
+      final vmRes = await Process.run(Platform.resolvedExecutable, [
+        '--packages=${res.overlayPackageConfigPath}',
+        p.join(pkgRoot, 'test', 'run_check.dart'),
+      ], workingDirectory: pkgRoot);
+      expect(vmRes.exitCode, equals(0), reason: '${vmRes.stderr}');
+    });
   });
 }

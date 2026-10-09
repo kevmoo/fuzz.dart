@@ -262,6 +262,7 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
     if (unp is RethrowExpression) return;
     if (unp is! ThrowExpression && _alwaysThrows(unp)) return;
     if (unp is! ThrowExpression && _isInsideAssignmentRhs(expr)) return;
+    if (unp is! ThrowExpression && _isInsideNumericDispatchRhs(expr)) return;
     if (unp is! ThrowExpression && _isInVoidPermittingContext(expr)) return;
     if (preserveConditionFlow && unp is! ThrowExpression) {
       final finder = _ConditionFlowFinder();
@@ -324,6 +325,44 @@ class _InstrumentVisitor extends RecursiveAstVisitor<void> {
           cur is PatternAssignment) {
         return true;
       }
+    }
+    return false;
+  }
+
+  /// Returns `true` when [expr] is positioned inside the right-hand operand of
+  /// `+`, `-`, `*`, or `%` (or an argument to `remainder` / `clamp`), where
+  /// `int` operators impose downward context type `num` while still refining
+  /// their static return type to `int` only if the operand's static type stays
+  /// `int`. Wrapping [expr] in generic `$fuzzExpr<T>` under context `num`
+  /// would solve `T = num` and break outer `int` return/argument types.
+  static bool _isInsideNumericDispatchRhs(Expression expr) {
+    AstNode? cur = expr;
+    while (cur != null) {
+      final parent = cur.parent;
+      if (parent is ParenthesizedExpression ||
+          parent is SwitchExpressionCase ||
+          (parent is ConditionalExpression && cur != parent.condition) ||
+          (parent is SwitchExpression && cur != parent.expression) ||
+          (parent is CascadeExpression && cur == parent.target) ||
+          (parent is BinaryExpression &&
+              parent.operator.type == TokenType.QUESTION_QUESTION)) {
+        cur = parent;
+        continue;
+      }
+      if (parent is BinaryExpression && cur == parent.rightOperand) {
+        final op = parent.operator.type;
+        return op == TokenType.PLUS ||
+            op == TokenType.MINUS ||
+            op == TokenType.STAR ||
+            op == TokenType.PERCENT;
+      }
+      if (parent is ArgumentList) {
+        if (parent.parent case MethodInvocation(:final methodName)) {
+          final name = methodName.name;
+          return name == 'remainder' || name == 'clamp';
+        }
+      }
+      return false;
     }
     return false;
   }
