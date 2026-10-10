@@ -403,7 +403,7 @@ class _RunCommand extends Command<int> {
     return pkgPath;
   }
 
-  static String _prepareRunnerEntrypoint({
+  String _prepareRunnerEntrypoint({
     required String targetPath,
     required String fuzzDir,
   }) {
@@ -412,16 +412,23 @@ class _RunCommand extends Command<int> {
       content: targetSource,
       throwIfDiagnostics: false,
     );
-    final hasMain = parsed.unit.declarations.any(
-      (d) => d is FunctionDeclaration && d.name.lexeme == 'main',
-    );
-    if (hasMain) {
-      return targetPath;
+    final fnNames = {
+      for (final d in parsed.unit.declarations.whereType<FunctionDeclaration>())
+        d.name.lexeme,
+    };
+    if (!fnNames.contains('fuzzTarget')) {
+      if (fnNames.contains('main')) {
+        return targetPath;
+      }
+      usageException(
+        'Target script must declare top-level fuzzTarget(Uint8List): '
+        '$targetPath',
+      );
     }
     final wrapperPath = p.join(fuzzDir, 'fuzz_entrypoint.dart');
     final targetUri = p.toUri(targetPath);
     File(wrapperPath).writeAsStringSync('''
-import 'package:fuzz/fuzz.dart';
+import 'package:fuzz/src/fuzz_runtime.dart';
 import '$targetUri' as target;
 
 void main(List<String> args) {

@@ -158,7 +158,7 @@ void main() {
       final scriptFile = File('${d.sandbox}/crash_harness.dart')
         ..writeAsStringSync('''
 import 'dart:typed_data';
-import 'package:fuzz/fuzz.dart';
+import 'package:fuzz/src/fuzz_runtime.dart';
 
 void main(List<String> args) {
   FuzzRuntime.runDriver(
@@ -269,7 +269,7 @@ void main(List<String> args) {
         ..writeAsStringSync('''
 import 'dart:async';
 import 'dart:typed_data';
-import 'package:fuzz/fuzz.dart';
+import 'package:fuzz/src/fuzz_runtime.dart';
 
 void main(List<String> args) {
   FuzzRuntime.runDriver(

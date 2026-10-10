@@ -474,14 +474,17 @@ abstract final class FuzzRuntime {
       i++
     ) {
       final isInitialSeed = i < initialCorpusLen;
-      final mutated = isInitialSeed
-          ? corpus[i]
-          : _mutatePureDartInput(
-              corpus[rng.nextInt(corpus.length)],
-              rng,
-              maxLen,
-              dictTokens,
-            );
+      final Uint8List mutated;
+      if (isInitialSeed) {
+        mutated = corpus[i];
+      } else {
+        final list = corpus[rng.nextInt(corpus.length)].toList();
+        final steps = rng.nextInt(4) + 1;
+        for (var s = 0; s < steps; s++) {
+          _applySingleMutation(list, rng, maxLen, dictTokens);
+        }
+        mutated = Uint8List.fromList(list);
+      }
       _resetPerInputState();
       final copy = Uint8List.fromList(mutated);
       final rc = _invokeTarget(target, copy, deduplicator, asyncRunner);
@@ -702,20 +705,6 @@ abstract final class FuzzRuntime {
       words[w] = 0;
     }
     return newEdges;
-  }
-
-  static Uint8List _mutatePureDartInput(
-    Uint8List base,
-    Random rng,
-    int maxLen,
-    List<Uint8List> dictTokens,
-  ) {
-    final list = base.toList();
-    final steps = rng.nextInt(4) + 1;
-    for (var s = 0; s < steps; s++) {
-      _applySingleMutation(list, rng, maxLen, dictTokens);
-    }
-    return Uint8List.fromList(list);
   }
 
   static void _applySingleMutation(
@@ -1280,7 +1269,25 @@ final class _RootMicrotaskDrainer {
       }
       _instance = drainer;
     }
-    drainer._drainPending();
+    drainer._enterScope();
+    try {
+      final asyncLib = drainer._handleFromPersistent(
+        drainer._asyncLibPersistent,
+      );
+      final ensureFn = drainer._handleFromPersistent(
+        drainer._ensureScheduleNamePersistent,
+      );
+      drainer._invoke(asyncLib, ensureFn, 0, nullptr);
+      final isolateLib = drainer._handleFromPersistent(
+        drainer._isolateLibPersistent,
+      );
+      final runPendingFn = drainer._handleFromPersistent(
+        drainer._runPendingNamePersistent,
+      );
+      drainer._invoke(isolateLib, runPendingFn, 0, nullptr);
+    } finally {
+      drainer._exitScope();
+    }
   }
 
   static _RootMicrotaskDrainer? _tryInit() {
@@ -1356,20 +1363,6 @@ final class _RootMicrotaskDrainer {
       }
     } on Object {
       return null;
-    }
-  }
-
-  void _drainPending() {
-    _enterScope();
-    try {
-      final asyncLib = _handleFromPersistent(_asyncLibPersistent);
-      final ensureFn = _handleFromPersistent(_ensureScheduleNamePersistent);
-      _invoke(asyncLib, ensureFn, 0, nullptr);
-      final isolateLib = _handleFromPersistent(_isolateLibPersistent);
-      final runPendingFn = _handleFromPersistent(_runPendingNamePersistent);
-      _invoke(isolateLib, runPendingFn, 0, nullptr);
-    } finally {
-      _exitScope();
     }
   }
 }
