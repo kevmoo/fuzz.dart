@@ -463,7 +463,7 @@ abstract final class FuzzRuntime {
     var totalCovEdges = 0;
     var completedRuns = 0;
 
-    stderr.writeln('INFO: Seed: $seed');
+    print('INFO: Seed: $seed');
     _covMap.fillRange(0, numCounters, 0);
 
     for (
@@ -561,9 +561,7 @@ abstract final class FuzzRuntime {
     for (final item in corpus) {
       totalBytes += item.length;
     }
-    stderr.writeln(
-      '#$iter\t$tag\tcov: $covEdges corp: ${corpus.length}/${totalBytes}b',
-    );
+    print('#$iter\t$tag\tcov: $covEdges corp: ${corpus.length}/${totalBytes}b');
   }
 
   static List<Uint8List> _loadSeedCorpusFiles(List<String> paths) {
