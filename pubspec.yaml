@@ -1,6 +1,6 @@
 name: fuzz
 description: Coverage-guided libFuzzer + dart:ffi AST instrumentor and pure-Dart parser fuzzing combinators.
-version: 1.0.0
+version: 1.0.1-wip
 repository: https://github.com/kevmoo/fuzz.dart
 
 screenshots:

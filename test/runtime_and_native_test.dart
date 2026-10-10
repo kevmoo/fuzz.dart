@@ -83,22 +83,31 @@ void main() {
 
       var foundRhsMagic = false;
       var foundLhsMagic = false;
-      FuzzRuntime.runDriver(
-        (Uint8List data) {
-          $fuzzEdge(1);
-          if ($fuzzGe(data.length, 4, 10)) {
-            $fuzzEdge(2);
-            final str = String.fromCharCodes(data.take(4));
-            if ($fuzzEq(str, 'FUZZ', 20)) {
-              foundRhsMagic = true;
+      expect(
+        () => FuzzRuntime.runDriver(
+          (Uint8List data) {
+            $fuzzEdge(1);
+            if ($fuzzGe(data.length, 4, 10)) {
+              $fuzzEdge(2);
+              final str = String.fromCharCodes(data.take(4));
+              if ($fuzzEq(str, 'FUZZ', 20)) {
+                foundRhsMagic = true;
+              }
+              if ($fuzzEq('DART', str, 30)) {
+                foundLhsMagic = true;
+              }
             }
-            if ($fuzzEq('DART', str, 30)) {
-              foundLhsMagic = true;
-            }
-          }
-        },
-        mode: FuzzMode.pureDart,
-        fuzzerArgs: const ['-runs=3000', '-max_len=16'],
+          },
+          mode: FuzzMode.pureDart,
+          fuzzerArgs: const ['-runs=3000', '-max_len=16'],
+        ),
+        prints(
+          allOf(
+            startsWith('INFO: Seed: '),
+            contains('#1\tINITED\t'),
+            contains('#3000\tDONE\t'),
+          ),
+        ),
       );
       expect(foundRhsMagic, isTrue);
       expect(foundLhsMagic, isTrue);
@@ -111,13 +120,21 @@ void main() {
       Directory(corpusPath).createSync(recursive: true);
 
       final seenRun1 = <List<int>>[];
-      FuzzRuntime.runDriver(
-        (Uint8List data) {
-          seenRun1.add(data.toList());
-          $fuzzEdge(data.isEmpty ? 1 : (data.first + 2));
-        },
-        mode: FuzzMode.pureDart,
-        fuzzerArgs: ['-runs=15', '-seed=42', corpusPath],
+      expect(
+        () => FuzzRuntime.runDriver(
+          (Uint8List data) {
+            seenRun1.add(data.toList());
+            $fuzzEdge(data.isEmpty ? 1 : (data.first + 2));
+          },
+          mode: FuzzMode.pureDart,
+          fuzzerArgs: ['-runs=15', '-seed=42', corpusPath],
+        ),
+        prints(
+          allOf(
+            startsWith('INFO: Seed: 42\n#1\tINITED\t'),
+            contains('#15\tDONE\t'),
+          ),
+        ),
       );
 
       // First input in an empty corpus must be the 0-byte seed, without
@@ -141,13 +158,21 @@ void main() {
       final corpusPath2 = '${d.sandbox}/pure_corpus_2';
       Directory(corpusPath2).createSync(recursive: true);
       final seenRun2 = <List<int>>[];
-      FuzzRuntime.runDriver(
-        (Uint8List data) {
-          seenRun2.add(data.toList());
-          $fuzzEdge(data.isEmpty ? 1 : (data.first + 2));
-        },
-        mode: FuzzMode.pureDart,
-        fuzzerArgs: ['-runs=15', '-seed=42', corpusPath2],
+      expect(
+        () => FuzzRuntime.runDriver(
+          (Uint8List data) {
+            seenRun2.add(data.toList());
+            $fuzzEdge(data.isEmpty ? 1 : (data.first + 2));
+          },
+          mode: FuzzMode.pureDart,
+          fuzzerArgs: ['-runs=15', '-seed=42', corpusPath2],
+        ),
+        prints(
+          allOf(
+            startsWith('INFO: Seed: 42\n#1\tINITED\t'),
+            contains('#15\tDONE\t'),
+          ),
+        ),
       );
       expect(seenRun2, equals(seenRun1));
       expect(corpusDir.name, equals('pure_corpus'));
@@ -206,18 +231,26 @@ void main(List<String> args) {
       final dictFile = File('${d.sandbox}/custom.dict')
         ..writeAsStringSync('# comment line\nkw1="<<FUZZ_DICT_MAGIC>>"\n');
       var matchedMagic = false;
-      FuzzRuntime.runDriver(
-        (Uint8List data) {
-          final str = String.fromCharCodes(data);
-          if (str.contains('<<FUZZ_DICT_MAGIC>>')) {
-            matchedMagic = true;
-            $fuzzEdge(500);
-          } else {
-            $fuzzEdge(1);
-          }
-        },
-        mode: FuzzMode.pureDart,
-        fuzzerArgs: ['-runs=80', '-seed=7', '-dict=${dictFile.path}'],
+      expect(
+        () => FuzzRuntime.runDriver(
+          (Uint8List data) {
+            final str = String.fromCharCodes(data);
+            if (str.contains('<<FUZZ_DICT_MAGIC>>')) {
+              matchedMagic = true;
+              $fuzzEdge(500);
+            } else {
+              $fuzzEdge(1);
+            }
+          },
+          mode: FuzzMode.pureDart,
+          fuzzerArgs: ['-runs=80', '-seed=7', '-dict=${dictFile.path}'],
+        ),
+        prints(
+          allOf(
+            startsWith('INFO: Seed: 7\n#1\tINITED\t'),
+            contains('#80\tDONE\t'),
+          ),
+        ),
       );
       expect(matchedMagic, isTrue);
     });
@@ -230,31 +263,40 @@ void main(List<String> args) {
 
       var solvedPostAwaitMagic = false;
       var unawaitedPostCancelRan = false;
-      FuzzRuntime.runDriver(
-        (Uint8List data) async {
-          final sub = Stream<Uint8List>.value(data).listen((_) {});
-          await sub.cancel();
-          final emptyIter = StreamIterator(const Stream<int>.empty());
-          while (await emptyIter.moveNext()) {}
-          await emptyIter.cancel();
-          await Future<void>.delayed(const Duration(milliseconds: 10));
-          final chunks = await Stream<Uint8List>.value(data).toList();
-          final merged = chunks.isEmpty ? Uint8List(0) : chunks.first;
-          $fuzzEdge(301);
-          if ($fuzzGe(merged.length, 4, 302)) {
-            final str = String.fromCharCodes(merged.take(4));
-            if ($fuzzEq(str, 'ASYN', 303)) {
-              solvedPostAwaitMagic = true;
+      expect(
+        () => FuzzRuntime.runDriver(
+          (Uint8List data) async {
+            final sub = Stream<Uint8List>.value(data).listen((_) {});
+            await sub.cancel();
+            final emptyIter = StreamIterator(const Stream<int>.empty());
+            while (await emptyIter.moveNext()) {}
+            await emptyIter.cancel();
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+            final chunks = await Stream<Uint8List>.value(data).toList();
+            final merged = chunks.isEmpty ? Uint8List(0) : chunks.first;
+            $fuzzEdge(301);
+            if ($fuzzGe(merged.length, 4, 302)) {
+              final str = String.fromCharCodes(merged.take(4));
+              if ($fuzzEq(str, 'ASYN', 303)) {
+                solvedPostAwaitMagic = true;
+              }
             }
-          }
-          unawaited(() async {
-            final s = Stream<int>.value(1).listen((_) {});
-            await s.cancel();
-            unawaitedPostCancelRan = true;
-          }());
-        },
-        mode: FuzzMode.pureDart,
-        fuzzerArgs: const ['-runs=1500', '-max_len=16'],
+            unawaited(() async {
+              final s = Stream<int>.value(1).listen((_) {});
+              await s.cancel();
+              unawaitedPostCancelRan = true;
+            }());
+          },
+          mode: FuzzMode.pureDart,
+          fuzzerArgs: const ['-runs=1500', '-max_len=16'],
+        ),
+        prints(
+          allOf(
+            startsWith('INFO: Seed: '),
+            contains('#1\tINITED\t'),
+            contains('#1500\tDONE\t'),
+          ),
+        ),
       );
       expect($fuzzSiteHits[301], equals(1));
       expect(solvedPostAwaitMagic, isTrue);
