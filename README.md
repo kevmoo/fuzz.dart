@@ -33,13 +33,13 @@ fuzzing combinators for Dart packages.
 > [!NOTE]
 >
 > `fuzzTarget` may be synchronous (`void fuzzTarget(Uint8List data)`) or
-> asynchronous (`Future<void> fuzzTarget(Uint8List data) async`). When
-> `fuzzTarget` returns a `Future` or schedules microtasks (such as driving a
-> `Stream` parser over `Stream.value(data)`), `FuzzRuntime.runDriver` drains the
-> microtask queue synchronously within each `LLVMFuzzerRunDriver` callback so
-> post-`await` coverage and unhandled exceptions are attributed to the active
-> input. Only in-memory `Future`s and `Stream`s are supported inside `fuzz run`
-> (do not await real OS/network I/O).
+> asynchronous (`Future<void> fuzzTarget(Uint8List data) async`, matching
+> `FuzzTarget`). When `fuzzTarget` returns a `Future` or schedules microtasks
+> (such as driving a `Stream` parser over `Stream.value(data)`), `fuzz run`
+> drains the microtask queue synchronously within each `LLVMFuzzerRunDriver`
+> callback so post-`await` coverage and unhandled exceptions are attributed to
+> the active input. Only in-memory `Future`s and `Stream`s are supported inside
+> `fuzz run` (do not await real OS/network I/O).
 
 ```dart
 import 'dart:typed_data';
@@ -223,11 +223,11 @@ four semantic contracts exported by `package:fuzz/fuzz.dart`:
 
 ## Memory and Execution Bounds
 
-- **Stateless Harness Callbacks**: Keep the `FuzzRuntime.runDriver` callback
-  stateless across invocations (instantiate parser state inside the callback
-  rather than appending results to top-level globals).
-- **Defensive Input Copying**: `FuzzRuntime` copies each input buffer into the
-  Dart heap (`Uint8List.fromList`) before invoking the target callback so
+- **Stateless Harness Callbacks**: Keep your `fuzzTarget` callback stateless
+  across invocations (instantiate parser state inside the callback rather than
+  appending results to top-level globals).
+- **Defensive Input Copying**: The fuzzing runtime copies each input buffer into
+  the Dart heap (`Uint8List.fromList`) before invoking the target callback so
   retained sublist views never reference mutated C scratch memory.
 - **Automatic Heap, RSS, and Timeout Ceilings**: `fuzz run` spawns the target
   Dart VM with `--old_gen_heap_size=1024` (1 GB) and passes

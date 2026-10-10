@@ -8,15 +8,7 @@ package:fuzz/fuzz.dart:
   captureStreamZoneErrors (function: Future<({bool completed, List<T> items, Object? streamError, Object? uncaughtZoneError})> Function<S, T>(Stream<S>, StreamTransformer<S, T>, {Duration timeout}))
   verifyChunkSplitEquivalence (function: void Function<T>({bool Function(T, T)? equals, required List<int> Function(Random) generateEncodedStream, int iterations, int maxStep, required T Function(Iterable<List<int>>) parseChunked, required T Function(List<int>) parseFull, int seed}))
   verifyNoUnescapedCrlf (function: void Function(String, {String context}))
-  FuzzMode (enum):
-    cgf (enum constant: FuzzMode)
-    pureDart (enum constant: FuzzMode)
-    values (static const getter: List<FuzzMode>)
-  FuzzRuntime (class extends Object, abstract, final):
-    numCounters (static const getter: int)
-    flushSiteHits (static method: void Function([String?]))
-    init (static method: void Function({String? libraryPath, FuzzMode? mode}))
-    runDriver (static method: int Function(FutureOr<void> Function(Uint8List), {List<String> fuzzerArgs, String? libraryPath, FuzzMode? mode}))
+  FuzzTarget (type alias for FutureOr<void> Function(Uint8List))
   StreamContractResult (type alias<T> for ({bool completed, List<T> items, Object? streamError, Object? uncaughtZoneError}))
 dart:async:
   Future (referenced)

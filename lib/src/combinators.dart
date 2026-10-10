@@ -1,6 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:typed_data';
+
+/// Signature for a `package:fuzz` target entrypoint (`fuzzTarget`).
+///
+/// Targets may execute synchronously (`void fuzzTarget(Uint8List data)`) or
+/// return an in-memory [Future] (`Future<void> fuzzTarget(Uint8List data)`).
+typedef FuzzTarget = FutureOr<void> Function(Uint8List data);
 
 /// Standard 64-bit signed/unsigned integer boundary values for stressing length,
 /// framing, and size parsers (including `-2^63` signed overflow and 32/64-bit

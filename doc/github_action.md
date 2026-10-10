@@ -38,12 +38,11 @@ flowchart LR
      `.dart_tool/fuzz/package_config.json` that automatically maps
      `package:fuzz`.
 3. **Driver Entrypoint Synthesis (`.dart_tool/fuzz/fuzz_entrypoint.dart`)**:
-   - When the target script defines `fuzzTarget(Uint8List bytes)` without
-     calling `FuzzRuntime.runDriver` directly, `fuzz run` synthesizes
-     `.dart_tool/fuzz/fuzz_entrypoint.dart` passing `target.fuzzTarget` to
-     `FuzzRuntime.runDriver`.
-   - Advanced targets that use `package:fuzz/fuzz.dart` combinators or custom
-     `FuzzRuntime.runDriver` callbacks can still define
+   - When the target script declares top-level `fuzzTarget(Uint8List bytes)`
+     (even if the script also defines a standalone `main()` helper), `fuzz run`
+     synthesizes `.dart_tool/fuzz/fuzz_entrypoint.dart` to wire
+     `target.fuzzTarget` into the coverage-guided driver.
+   - Custom driver scripts that omit `fuzzTarget` can still declare
      `main(List<String> args)` directly.
 4. **Native `libFuzzer` Execution & Artifact Upload**:
    - Compiles `fuzzer.cc` with `clang++ -fsanitize=fuzzer-no-link` into

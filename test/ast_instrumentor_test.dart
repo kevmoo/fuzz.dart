@@ -1090,6 +1090,73 @@ void fuzzTarget(Uint8List bytes) {
       );
     });
 
+    test('fuzz run prefers fuzzTarget over helper main() and rejects scripts '
+        'with neither', () async {
+      await d.dir('entry_pkg', [
+        d.file('pubspec.yaml', 'name: entry_pkg\n'),
+        d.dir('.dart_tool', [
+          d.file(
+            'package_config.json',
+            jsonEncode({
+              'configVersion': 2,
+              'packages': [
+                {
+                  'name': 'entry_pkg',
+                  'rootUri': '../',
+                  'packageUri': 'lib/',
+                  'languageVersion': '3.7',
+                },
+              ],
+            }),
+          ),
+        ]),
+        d.dir('lib', [d.file('entry_pkg.dart', 'void noop() {}\n')]),
+        d.dir('test', [
+          d.dir('fuzz', [
+            d.file('both_fuzz.dart', '''
+import 'dart:io';
+import 'dart:typed_data';
+
+void fuzzTarget(Uint8List bytes) {}
+
+void main() {
+  stderr.writeln('wrong entrypoint');
+  exit(42);
+}
+'''),
+            d.file('empty_fuzz.dart', 'void helperOnly() {}\n'),
+          ]),
+        ]),
+      ]).create();
+
+      final pkgRoot = p.join(d.sandbox, 'entry_pkg');
+      final fuzzBin = p.join(Directory.current.path, 'bin', 'fuzz.dart');
+
+      final bothRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--mode=pure-dart',
+        '--runs=5',
+        'test/fuzz/both_fuzz.dart',
+      ]);
+      expect(bothRes.exitCode, equals(0), reason: '${bothRes.stderr}');
+
+      final emptyRes = await Process.run(Platform.resolvedExecutable, [
+        fuzzBin,
+        'run',
+        '--package-root=$pkgRoot',
+        '--mode=pure-dart',
+        '--runs=5',
+        'test/fuzz/empty_fuzz.dart',
+      ]);
+      expect(emptyRes.exitCode, equals(64));
+      expect(
+        emptyRes.stderr.toString(),
+        contains('Target script must declare top-level fuzzTarget(Uint8List)'),
+      );
+    });
+
     test('fuzz run deduplicates multiple crashes in-process, minimizes '
         'shortest input, and writes crashes_report.json', () async {
       await d.dir('multi_crash_pkg', [

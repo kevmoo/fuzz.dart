@@ -24,7 +24,14 @@ String formatDartInputLiteral(Uint8List data, {int? maxPreviewBytes}) {
     final truncated = _truncateUtf16Safe(text, maxPreviewBytes);
     if (truncated.isEmpty) return "''";
     if (!_needsEscapingForRawSingleQuote(truncated)) return "r'$truncated'";
-    return "'${_escapeDartSingleQuoted(truncated)}'";
+    final escaped = truncated
+        .replaceAll(r'\', r'\\')
+        .replaceAll("'", r"\'")
+        .replaceAll(r'$', r'\$')
+        .replaceAll('\n', r'\n')
+        .replaceAll('\r', r'\r')
+        .replaceAll('\t', r'\t');
+    return "'$escaped'";
   }
   final limit = maxPreviewBytes != null && data.length > maxPreviewBytes
       ? maxPreviewBytes
@@ -76,14 +83,6 @@ bool _needsEscapingForRawSingleQuote(String s) {
   }
   return false;
 }
-
-String _escapeDartSingleQuoted(String s) => s
-    .replaceAll(r'\', r'\\')
-    .replaceAll("'", r"\'")
-    .replaceAll(r'$', r'\$')
-    .replaceAll('\n', r'\n')
-    .replaceAll('\r', r'\r')
-    .replaceAll('\t', r'\t');
 
 /// Deduplicated crash record captured during an in-process fuzzing session.
 final class CrashRecord {
@@ -279,7 +278,11 @@ final class CrashDeduplicator {
     Frame? targetFrame;
     final pkg = targetPackage;
     for (final frame in trace.frames) {
-      if (_isInternalFuzzFrame(frame)) continue;
+      if (frame.isCore ||
+          frame.package == 'fuzz' ||
+          frame.uri.path.endsWith('/fuzz_entrypoint.dart')) {
+        continue;
+      }
       originFrame ??= frame;
       if (pkg != null && pkg.isNotEmpty && frame.package == pkg) {
         targetFrame ??= frame;
@@ -289,11 +292,6 @@ final class CrashDeduplicator {
     originFrame ??= trace.frames.isNotEmpty ? trace.frames.first : null;
     return (originFrame: originFrame, targetFrame: targetFrame);
   }
-
-  static bool _isInternalFuzzFrame(Frame f) =>
-      f.isCore ||
-      f.package == 'fuzz' ||
-      f.uri.path.endsWith('/fuzz_entrypoint.dart');
 
   // Column numbers are deliberately omitted from the signature key because AST
   // instrumentation (`$fuzzExpr(...)`) shifts horizontal column offsets while
