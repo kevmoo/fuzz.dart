@@ -2,10 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:checks/checks.dart';
 import 'package:fuzz/src/crash_deduplicator.dart';
 import 'package:path/path.dart' as p;
 import 'package:stack_trace/stack_trace.dart';
-import 'package:test/test.dart';
+import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 
 void main() {
@@ -36,14 +37,12 @@ void main() {
         RangeError('index out of range'),
         traceCol10,
       );
-      expect(first.isNew, isTrue);
-      expect(first.isMinimized, isFalse);
-      expect(first.record.index, equals(1));
-      expect(first.record.hitCount, equals(1));
-      expect(
-        File(first.record.artifactPath).readAsBytesSync(),
-        equals(longInput),
-      );
+      check(first.isNew).isTrue();
+      check(first.isMinimized).isFalse();
+      check(first.record.index).equals(1);
+      check(first.record.hitCount).equals(1);
+      check(File(first.record.artifactPath).readAsBytesSync())
+          .deepEquals(longInput);
 
       // Same line (42), different column (99), shorter input -> same bucket,
       // overwrites artifact file in place!
@@ -53,16 +52,14 @@ void main() {
         RangeError('index out of range'),
         traceCol99,
       );
-      expect(second.isNew, isFalse);
-      expect(second.isMinimized, isTrue);
-      expect(second.previousLength, equals(longInput.length));
-      expect(second.record.index, equals(1));
-      expect(second.record.hitCount, equals(2));
-      expect(second.record.shortestInput, equals(shortInput));
-      expect(
-        File(first.record.artifactPath).readAsBytesSync(),
-        equals(shortInput),
-      );
+      check(second.isNew).isFalse();
+      check(second.isMinimized).isTrue();
+      check(second.previousLength).equals(longInput.length);
+      check(second.record.index).equals(1);
+      check(second.record.hitCount).equals(2);
+      check(second.record.shortestInput).deepEquals(shortInput);
+      check(File(first.record.artifactPath).readAsBytesSync())
+          .deepEquals(shortInput);
 
       // Longer input for the same signature does not overwrite shortestInput.
       final mediumInput = Uint8List.fromList(utf8.encode('MEDIUM_INPUT'));
@@ -71,15 +68,13 @@ void main() {
         RangeError('index out of range'),
         traceCol10,
       );
-      expect(third.isNew, isFalse);
-      expect(third.isMinimized, isFalse);
-      expect(third.record.hitCount, equals(3));
-      expect(
-        File(first.record.artifactPath).readAsBytesSync(),
-        equals(shortInput),
-      );
-      expect(dedup.records, hasLength(1));
-      expect(dedup.totalHits, equals(3));
+      check(third.isNew).isFalse();
+      check(third.isMinimized).isFalse();
+      check(third.record.hitCount).equals(3);
+      check(File(first.record.artifactPath).readAsBytesSync())
+          .deepEquals(shortInput);
+      check(dedup.records).length.equals(1);
+      check(dedup.totalHits).equals(3);
     });
 
     test('disambiguates crashes in shared helper packages by targetPackage '
@@ -111,21 +106,15 @@ void main() {
         traceB,
       );
 
-      expect(resA.isNew, isTrue);
-      expect(resB.isNew, isTrue);
-      expect(dedup.records, hasLength(2));
-      expect(
-        resA.record.primaryBlame,
-        equals(
-          'ScssParser.interpolation (package:sass/src/parse/scss.dart:120)',
-        ),
+      check(resA.isNew).isTrue();
+      check(resB.isNew).isTrue();
+      check(dedup.records).length.equals(2);
+      check(resA.record.primaryBlame).equals(
+        'ScssParser.interpolation (package:sass/src/parse/scss.dart:120)',
       );
-      expect(
-        resB.record.primaryBlame,
-        equals(
-          'StylesheetParser.mediaQuery '
-          '(package:sass/src/parse/stylesheet.dart:250)',
-        ),
+      check(resB.record.primaryBlame).equals(
+        'StylesheetParser.mediaQuery '
+        '(package:sass/src/parse/stylesheet.dart:250)',
       );
 
       final reportPath = p.join(d.sandbox, 'crashes_report.json');
@@ -133,67 +122,50 @@ void main() {
       final jsonMap = jsonDecode(
         File(reportPath).readAsStringSync(),
       ) as Map<String, Object?>;
-      expect(jsonMap['package'], equals('sass'));
-      expect(jsonMap['totalUniqueCrashes'], equals(2));
-      expect(jsonMap['totalCrashHits'], equals(2));
+      check(jsonMap['package']).equals('sass');
+      check(jsonMap['totalUniqueCrashes']).equals(2);
+      check(jsonMap['totalCrashHits']).equals(2);
     });
 
     test('formatDartInputLiteral formats printable UTF-8 and binary inputs '
         'cleanly', () {
-      expect(formatDartInputLiteral(Uint8List(0)), equals("''"));
-      expect(
-        formatDartInputLiteral(Uint8List.fromList(utf8.encode(r'[c\c'))),
-        equals(r"r'[c\c'"),
-      );
-      expect(
-        formatDartInputLiteral(Uint8List.fromList(utf8.encode("a'b\nc"))),
-        equals(r"'a\'b\nc'"),
-      );
-      expect(
-        formatDartInputLiteral(Uint8List.fromList([0xFF, 0x00, 0x41])),
-        equals('Uint8List.fromList([0xff, 0x00, 0x41])'),
-      );
+      check(formatDartInputLiteral(Uint8List(0))).equals("''");
+      check(formatDartInputLiteral(Uint8List.fromList(utf8.encode(r'[c\c'))))
+          .equals(r"r'[c\c'");
+      check(formatDartInputLiteral(Uint8List.fromList(utf8.encode("a'b\nc"))))
+          .equals(r"'a\'b\nc'");
+      check(formatDartInputLiteral(Uint8List.fromList([0xFF, 0x00, 0x41])))
+          .equals('Uint8List.fromList([0xff, 0x00, 0x41])');
       // UTF-16 surrogate pair ('😀' = 2 code units) must not be split on
       // maxPreviewBytes truncation.
-      expect(
+      check(
         formatDartInputLiteral(
           Uint8List.fromList(utf8.encode('ab😀cd')),
           maxPreviewBytes: 3,
         ),
-        equals("r'ab...'"),
-      );
+      ).equals("r'ab...'");
       // C1 control characters (e.g. U+009B CSI) and U+2028 line separator fall
       // back to unambiguous byte literals.
-      expect(
-        formatDartInputLiteral(Uint8List.fromList(utf8.encode('a\u009bb'))),
-        equals('Uint8List.fromList([0x61, 0xc2, 0x9b, 0x62])'),
-      );
-      expect(
-        formatDartInputLiteral(Uint8List.fromList(utf8.encode('a\u2028b'))),
-        equals('Uint8List.fromList([0x61, 0xe2, 0x80, 0xa8, 0x62])'),
-      );
+      check(formatDartInputLiteral(Uint8List.fromList(utf8.encode('a\u009bb'))))
+          .equals('Uint8List.fromList([0x61, 0xc2, 0x9b, 0x62])');
+      check(formatDartInputLiteral(Uint8List.fromList(utf8.encode('a\u2028b'))))
+          .equals('Uint8List.fromList([0x61, 0xe2, 0x80, 0xa8, 0x62])');
     });
 
     test('fromFuzzerArgs disables keepGoing on -exact_artifact_path=, '
         '-minimize_crash=1, and -keep_going=0', () {
-      expect(
-        CrashDeduplicator.fromFuzzerArgs(const ['-runs=10']).keepGoing,
-        isTrue,
-      );
-      expect(
+      check(CrashDeduplicator.fromFuzzerArgs(const ['-runs=10']).keepGoing)
+          .isTrue();
+      check(
         CrashDeduplicator.fromFuzzerArgs(const [
           '-exact_artifact_path=/tmp/repro',
         ]).keepGoing,
-        isFalse,
-      );
-      expect(
+      ).isFalse();
+      check(
         CrashDeduplicator.fromFuzzerArgs(const ['-minimize_crash=1']).keepGoing,
-        isFalse,
-      );
-      expect(
-        CrashDeduplicator.fromFuzzerArgs(const ['-keep_going=0']).keepGoing,
-        isFalse,
-      );
+      ).isFalse();
+      check(CrashDeduplicator.fromFuzzerArgs(const ['-keep_going=0']).keepGoing)
+          .isFalse();
     });
   });
 }

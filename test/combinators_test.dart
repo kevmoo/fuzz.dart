@@ -3,8 +3,9 @@ library;
 
 import 'dart:async';
 
+import 'package:checks/checks.dart';
 import 'package:fuzz/fuzz.dart';
-import 'package:test/test.dart';
+import 'package:test/scaffolding.dart';
 
 void main() {
   group('Track 1 Combinators & Oracles', () {
@@ -28,22 +29,21 @@ void main() {
           iterations: 10,
           maxStep: 1,
         );
-        expect(
+        check(
           () => verifyChunkSplitEquivalence<List<int>>(
             generateEncodedStream: (_) => const [1],
             parseFull: (bytes) => bytes,
             parseChunked: (chunks) => [for (final c in chunks) ...c],
             maxStep: 0,
           ),
-          throwsArgumentError,
-        );
+        ).throws<ArgumentError>();
       },
     );
 
     test(
       'verifyChunkSplitEquivalence throws StateError on chunk-boundary bug',
       () {
-        expect(
+        check(
           () => verifyChunkSplitEquivalence<List<int>>(
             generateEncodedStream: (_) => const [1, 2, 3, 4, 5],
             parseFull: (bytes) => bytes,
@@ -60,8 +60,7 @@ void main() {
             },
             iterations: 10,
           ),
-          throwsStateError,
-        );
+        ).throws<StateError>();
       },
     );
 
@@ -101,7 +100,7 @@ void main() {
           Stream<List<int>>.value(const [1, 2, 3]),
           brokenTransformer,
         );
-        expect(result.uncaughtZoneError, isA<FormatException>());
+        check(result.uncaughtZoneError).isA<FormatException>();
 
         // Simulate a stream transformer whose onCancel hangs indefinitely.
         final hungCancelTransformer = StreamTransformer<List<int>, int>((
@@ -120,7 +119,7 @@ void main() {
           hungCancelTransformer,
           timeout: const Duration(milliseconds: 10),
         );
-        expect(hungResult.completed, isFalse);
+        check(hungResult.completed).isFalse();
       },
     );
 
@@ -128,28 +127,22 @@ void main() {
       'verifyNoUnescapedCrlf rejects CR, LF, and NUL control characters',
       () {
         verifyNoUnescapedCrlf('session=abc; Domain=example.com');
-        expect(
-          () => verifyNoUnescapedCrlf('session=abc\r\nX-Injected: 1'),
-          throwsStateError,
-        );
-        expect(
-          () => verifyNoUnescapedCrlf('session=abc\nX-Injected: 1'),
-          throwsStateError,
-        );
-        expect(
-          () => verifyNoUnescapedCrlf('session=abc\x00'),
-          throwsStateError,
-        );
+        check(() => verifyNoUnescapedCrlf('session=abc\r\nX-Injected: 1'))
+            .throws<StateError>();
+        check(() => verifyNoUnescapedCrlf('session=abc\nX-Injected: 1'))
+            .throws<StateError>();
+        check(() => verifyNoUnescapedCrlf('session=abc\x00'))
+            .throws<StateError>();
       },
     );
 
     test(
       'boundary corpora include 64-bit signed overflow and 65-bit hex wrap',
       () {
-        expect(fuzzBoundaryInts, contains(-9223372036854775808));
-        expect(fuzzBoundaryInts, contains(9223372036854775807));
-        expect(fuzzBoundaryHexStrings, contains('8000000000000000'));
-        expect(fuzzBoundaryHexStrings, contains('10000000000000000'));
+        check(fuzzBoundaryInts).contains(-9223372036854775808);
+        check(fuzzBoundaryInts).contains(9223372036854775807);
+        check(fuzzBoundaryHexStrings).contains('8000000000000000');
+        check(fuzzBoundaryHexStrings).contains('10000000000000000');
       },
     );
   });

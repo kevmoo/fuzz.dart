@@ -5,11 +5,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:analyzer/dart/analysis/utilities.dart';
+import 'package:checks/checks.dart';
 import 'package:fuzz/src/coverage_report.dart';
 import 'package:fuzz/src/fuzz_runtime.dart';
 import 'package:fuzz/src/instrument_ast.dart';
 import 'package:path/path.dart' as p;
-import 'package:test/test.dart';
+import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 
 void main() {
@@ -39,19 +40,20 @@ int check(int a, String s) {
         final instrumentor = AstInstrumentor();
         final out = instrumentor.instrumentSource(sample);
 
-        expect(out, contains("import 'package:fuzz/src/fuzz_runtime.dart';"));
-        expect(out, contains(r'$fuzzEdge('));
-        expect(out, contains(r'$fuzzEq(a, 42,'));
-        expect(out, contains(r'$fuzzSwitch(s,'));
-        expect(out, contains(r'$fuzzXor(a, 7,'));
-        expect(out, contains('const int kMagic = 1 + 2;'));
-        expect(out, contains('const Demo([int x = 3 == 3 ? 1 : 0]);'));
+        check(out)
+          ..contains("import 'package:fuzz/src/fuzz_runtime.dart';")
+          ..contains(r'$fuzzEdge(')
+          ..contains(r'$fuzzEq(a, 42,')
+          ..contains(r'$fuzzSwitch(s,')
+          ..contains(r'$fuzzXor(a, 7,')
+          ..contains('const int kMagic = 1 + 2;')
+          ..contains('const Demo([int x = 3 == 3 ? 1 : 0]);');
 
         final parsed = parseString(content: out);
-        expect(parsed.errors, isEmpty);
-        expect(instrumentor.edgesInserted, greaterThan(0));
-        expect(instrumentor.comparesInserted, equals(2));
-        expect(instrumentor.switchesInserted, equals(1));
+        check(parsed.errors).isEmpty();
+        check(instrumentor.edgesInserted).isGreaterThan(0);
+        check(instrumentor.comparesInserted).equals(2);
+        check(instrumentor.switchesInserted).equals(1);
       },
     );
 
@@ -69,13 +71,14 @@ bool isHeaderByte(int b) {
         final instrumentor = AstInstrumentor();
         final out = instrumentor.instrumentSource(partSample);
 
-        expect(out, isNot(contains('import ')));
-        expect(out, contains('// ignore_for_file: type=lint'));
-        expect(out, contains(r'$fuzzEq(b, 0xFE,'));
-        expect(out, contains(r'$fuzzLt(b, 0x20,'));
+        check(out)
+          ..not((it) => it.contains('import '))
+          ..contains('// ignore_for_file: type=lint')
+          ..contains(r'$fuzzEq(b, 0xFE,')
+          ..contains(r'$fuzzLt(b, 0x20,');
 
         final parsed = parseString(content: out);
-        expect(parsed.errors, isEmpty);
+        check(parsed.errors).isEmpty();
       },
     );
 
@@ -89,8 +92,8 @@ const int kVersion = 1;
 ''';
       final barrelInstrumentor = AstInstrumentor();
       final barrelOut = barrelInstrumentor.instrumentSource(barrelSample);
-      expect(barrelOut, equals(barrelSample));
-      expect(barrelOut, isNot(contains('fuzz_runtime.dart')));
+      check(barrelOut).equals(barrelSample);
+      check(barrelOut).not((it) => it.contains('fuzz_runtime.dart'));
 
       const zeroEditPartOfSample = '''
 part of 'parent.dart';
@@ -100,8 +103,8 @@ const int kPartConst = 42;
       final zeroEditPartOfOut = AstInstrumentor().instrumentSource(
         zeroEditPartOfSample,
       );
-      expect(zeroEditPartOfOut, equals(zeroEditPartOfSample));
-      expect(zeroEditPartOfOut, isNot(contains('ignore_for_file')));
+      check(zeroEditPartOfOut).equals(zeroEditPartOfSample);
+      check(zeroEditPartOfOut).not((it) => it.contains('ignore_for_file'));
 
       const parentWithPartSample = '''
 library parent;
@@ -112,12 +115,9 @@ part 'src/child.dart';
       final parentOut = parentInstrumentor.instrumentSource(
         parentWithPartSample,
       );
-      expect(
-        parentOut,
-        contains(
-          "import 'package:fuzz/src/fuzz_runtime.dart'; "
-          '// ignore_for_file: type=lint, unused_import, duplicate_ignore',
-        ),
+      check(parentOut).contains(
+        "import 'package:fuzz/src/fuzz_runtime.dart'; "
+        '// ignore_for_file: type=lint, unused_import, duplicate_ignore',
       );
     });
 
@@ -135,12 +135,13 @@ int promotedLength(String? value, bool flag) {
         final instrumentor = AstInstrumentor();
         final out = instrumentor.instrumentSource(nullPromotionSample);
 
-        expect(out, contains('value != null'));
-        expect(out, contains('flag == true'));
-        expect(out, isNot(contains(r'$fuzzNe(value, null')));
-        expect(out, isNot(contains(r'$fuzzEq(flag, true')));
-        expect(instrumentor.comparesInserted, equals(0));
-        expect(instrumentor.edgesInserted, greaterThan(0));
+        check(out)
+          ..contains('value != null')
+          ..contains('flag == true')
+          ..not((it) => it.contains(r'$fuzzNe(value, null'))
+          ..not((it) => it.contains(r'$fuzzEq(flag, true'));
+        check(instrumentor.comparesInserted).equals(0);
+        check(instrumentor.edgesInserted).isGreaterThan(0);
       },
     );
 
@@ -164,15 +165,15 @@ int evalPattern(int x) {
         final out = instrumentor.instrumentSource(patternSample);
 
         // ConstantPattern inside if-case must stay a valid constant expression.
-        expect(out, contains('if (x case const (1 ^ 2))'));
-        expect(out, isNot(contains(r'const ($fuzzXor')));
-
-        // Runtime guard expression in `when` clause must be instrumented.
-        expect(out, contains(r'$fuzzGt(v, 10,'));
-        expect(out, contains(r'$fuzzEq(v, 42,'));
+        check(out)
+          ..contains('if (x case const (1 ^ 2))')
+          ..not((it) => it.contains(r'const ($fuzzXor'))
+          // Runtime guard expression in `when` clause must be instrumented.
+          ..contains(r'$fuzzGt(v, 10,')
+          ..contains(r'$fuzzEq(v, 42,');
 
         final parsed = parseString(content: out);
-        expect(parsed.errors, isEmpty);
+        check(parsed.errors).isEmpty();
       },
     );
 
@@ -188,20 +189,21 @@ int check(int a, int b) {
         final instrumentor = AstInstrumentor();
         final out = instrumentor.instrumentSource(sample);
 
-        expect(out, contains('assert(a == b && a > 0);'));
-        expect(out, isNot(contains(r'$fuzzEq')));
-        expect(out, isNot(contains(r'$fuzzGt')));
-        expect(out, contains(r'$fuzzXor(a, b,'));
-        expect(instrumentor.comparesInserted, equals(1));
+        check(out)
+          ..contains('assert(a == b && a > 0);')
+          ..not((it) => it.contains(r'$fuzzEq'))
+          ..not((it) => it.contains(r'$fuzzGt'))
+          ..contains(r'$fuzzXor(a, b,');
+        check(instrumentor.comparesInserted).equals(1);
 
         final xorSiteId = instrumentor.sites
             .singleWhere((s) => s.kind == 'cmp')
             .id;
         $fuzzSiteHits[xorSiteId] = 0;
-        expect($fuzzXor(5, 5, xorSiteId), equals(0));
-        expect($fuzzSiteHits[xorSiteId], equals(1));
-        expect($fuzzXor(5, 3, xorSiteId), equals(6));
-        expect($fuzzSiteHits[xorSiteId], equals(3));
+        check($fuzzXor(5, 5, xorSiteId)).equals(0);
+        check($fuzzSiteHits[xorSiteId]).equals(1);
+        check($fuzzXor(5, 3, xorSiteId)).equals(6);
+        check($fuzzSiteHits[xorSiteId]).equals(3);
       },
     );
 
@@ -221,27 +223,22 @@ String describeCode(int code) => switch (code) {
 
         // The outer arrow body and the 3 non-throw case arms are wrapped with
         // $fuzzExpr; the throw arm is unwrapped as `throw $fuzzExpr(id, ...)`.
-        expect(out, contains(r'=> $fuzzExpr('));
-        expect(out, contains(r"=> $fuzzExpr(15470, 'ok')"));
-        expect(out, contains(r"=> $fuzzExpr(55973, 'missing')"));
-        expect(
-          out,
-          contains(
+        check(out)
+          ..contains(r'=> $fuzzExpr(')
+          ..contains(r"=> $fuzzExpr(15470, 'ok')")
+          ..contains(r"=> $fuzzExpr(55973, 'missing')")
+          ..contains(
             r'var c when $fuzzGe(c, 500, 46410) => '
             r"$fuzzExpr(30940, 'server_error')",
-          ),
-        );
-        expect(
-          out,
-          contains(
+          )
+          ..contains(
             r"_ => throw $fuzzExpr(5907, ArgumentError.value(code, 'code'))",
-          ),
-        );
+          );
 
         final parsed = parseString(content: out);
-        expect(parsed.errors, isEmpty);
-        expect(instrumentor.edgesInserted, equals(5));
-        expect(instrumentor.comparesInserted, equals(1));
+        check(parsed.errors).isEmpty();
+        check(instrumentor.edgesInserted).equals(5);
+        check(instrumentor.comparesInserted).equals(1);
       },
     );
 
@@ -254,16 +251,17 @@ int clampSign(int x, bool neg, bool zero) =>
       final instrumentor = AstInstrumentor();
       final out = instrumentor.instrumentSource(sample);
 
-      expect(out, contains(r'$fuzzBool(zero,'));
-      expect(out, contains(r'$fuzzBool(neg,'));
-      expect(out, contains(r'$fuzzExpr('));
+      check(out)
+        ..contains(r'$fuzzBool(zero,')
+        ..contains(r'$fuzzBool(neg,')
+        ..contains(r'$fuzzExpr(');
 
       final parsed = parseString(content: out);
-      expect(parsed.errors, isEmpty);
+      check(parsed.errors).isEmpty();
       // 1 arrow body + 2 outer ternary arms + 2 inner ternary arms = 5 edges.
-      expect(instrumentor.edgesInserted, equals(5));
+      check(instrumentor.edgesInserted).equals(5);
       // 2 non-binary conditions (`zero` and `neg`) = 2 cmp sites.
-      expect(instrumentor.comparesInserted, equals(2));
+      check(instrumentor.comparesInserted).equals(2);
     });
 
     test(r'wraps non-binary conditions in $fuzzBool while preserving type '
@@ -287,18 +285,19 @@ int scanItems(List<int> items, Object? maybeText) {
       final instrumentor = AstInstrumentor();
       final out = instrumentor.instrumentSource(sample);
 
-      expect(out, contains(r'if ($fuzzBool(items.isEmpty,'));
-      expect(out, contains(r'if ($fuzzBool(items.first.isEven,'));
-      // Type-promotion conditions (`is`, `!= null`) and `while (true)` must
-      // not be wrapped in $fuzzBool.
-      expect(out, contains('if (maybeText is String)'));
-      expect(out, contains('if (!(maybeText != null))'));
-      expect(out, contains('while (true)'));
-      expect(out, isNot(contains(r'$fuzzBool(true')));
+      check(out)
+        ..contains(r'if ($fuzzBool(items.isEmpty,')
+        ..contains(r'if ($fuzzBool(items.first.isEven,')
+        // Type-promotion conditions (`is`, `!= null`) and `while (true)` must
+        // not be wrapped in $fuzzBool.
+        ..contains('if (maybeText is String)')
+        ..contains('if (!(maybeText != null))')
+        ..contains('while (true)')
+        ..not((it) => it.contains(r'$fuzzBool(true'));
 
       final parsed = parseString(content: out);
-      expect(parsed.errors, isEmpty);
-      expect(instrumentor.comparesInserted, equals(2));
+      check(parsed.errors).isEmpty();
+      check(instrumentor.comparesInserted).equals(2);
     });
 
     test(
@@ -316,16 +315,17 @@ int sumUp(List<int> xs) {
         final instrumentor = AstInstrumentor();
         final out = instrumentor.instrumentSource(sample);
 
-        expect(out, contains(r'{ $fuzzEdge(15470); total += xs[i]; }'));
-        expect(out, contains(r'{ $fuzzEdge(30940); total -= 10; }'));
-        expect(out, contains(r'{ $fuzzEdge(46410); total++; }'));
+        check(out)
+          ..contains(r'{ $fuzzEdge(15470); total += xs[i]; }')
+          ..contains(r'{ $fuzzEdge(30940); total -= 10; }')
+          ..contains(r'{ $fuzzEdge(46410); total++; }');
 
         final parsed = parseString(content: out);
-        expect(parsed.errors, isEmpty);
+        check(parsed.errors).isEmpty();
         // 1 function body + 3 braceless loop bodies = 4 edges.
-        expect(instrumentor.edgesInserted, equals(4));
+        check(instrumentor.edgesInserted).equals(4);
         // 3 binary loop conditions = 3 cmp sites.
-        expect(instrumentor.comparesInserted, equals(3));
+        check(instrumentor.comparesInserted).equals(3);
       },
     );
 
@@ -372,61 +372,48 @@ class _SubEq {
       final instrumentor = AstInstrumentor();
       final out = instrumentor.instrumentSource(sample);
 
-      // async => is not wrapped in $fuzzExpr to preserve void expressions.
-      expect(
-        out,
-        contains(
+      check(out)
+        // async => is not wrapped in $fuzzExpr to preserve void expressions.
+        ..contains(
           'Future<void> asyncVoidArrow(String msg) async => print(msg);',
-        ),
-      );
-      // ConditionalExpression branches with `!= null`, `is`, or `false` stay
-      // unwrapped so Dart flow-analysis type promotion is preserved.
-      expect(out, contains(r'if ($fuzzBool(flag, 15470) ? x != null : false)'));
-      expect(
-        out,
-        contains(
+        )
+        // ConditionalExpression branches with `!= null`, `is`, or `false` stay
+        // unwrapped so Dart flow-analysis type promotion is preserved.
+        ..contains(r'if ($fuzzBool(flag, 15470) ? x != null : false)')
+        ..contains(
           r'if (($fuzzBool(flag, 30940) ? x is int : false) && x.isEven)',
-        ),
-      );
-      // All-throwing SwitchExpression omits an unreachable outer $fuzzExpr
-      // while unwrapping parenthesized `(throw ...)` inside its arm.
-      expect(
-        out,
-        contains(r'Never alwaysThrowsSwitch(int code) => switch (code) {'),
-      );
-      expect(
-        out,
-        contains(r"_ => (throw $fuzzExpr(21377, ArgumentError('other')))"),
-      );
-      // PatternAssignment loop condition is not wrapped in $fuzzBool, and
-      // `a ^ b` uses generic `$fuzzXor`.
-      expect(out, contains(r'while (((x, ok) = items.first).$2)'));
-      expect(out, contains(r'if ($fuzzXor(a, b, 52317))'));
-      // AssignmentExpression RHS ConditionalExpression arms stay unwrapped so
-      // downward context `int?` does not widen `$fuzzExpr<T>` and block LHS
-      // promotion to `int`.
-      expect(out, contains('position ??= match == null ? 0 : match.start;'));
-      // `super == other` is not rewritten into `$fuzzEq(super, other, id)`.
-      expect(out, contains('super == other'));
-      expect(out, isNot(contains(r'$fuzzEq(super,')));
+        )
+        // All-throwing SwitchExpression omits an unreachable outer $fuzzExpr
+        // while unwrapping parenthesized `(throw ...)` inside its arm.
+        ..contains(r'Never alwaysThrowsSwitch(int code) => switch (code) {')
+        ..contains(r"_ => (throw $fuzzExpr(21377, ArgumentError('other')))")
+        // PatternAssignment loop condition is not wrapped in $fuzzBool, and
+        // `a ^ b` uses generic `$fuzzXor`.
+        ..contains(r'while (((x, ok) = items.first).$2)')
+        ..contains(r'if ($fuzzXor(a, b, 52317))')
+        // AssignmentExpression RHS ConditionalExpression arms stay unwrapped so
+        // downward context `int?` does not widen `$fuzzExpr<T>` and block LHS
+        // promotion to `int`.
+        ..contains('position ??= match == null ? 0 : match.start;')
+        // `super == other` is not rewritten into `$fuzzEq(super, other, id)`.
+        ..contains('super == other')
+        ..not((it) => it.contains(r'$fuzzEq(super,'));
 
       final parsed = parseString(content: out);
-      expect(parsed.errors, isEmpty);
+      check(parsed.errors).isEmpty();
 
       // Verify generic $fuzzXor on bool operands.
       $fuzzSiteHits[52317] = 0;
-      expect($fuzzXor(true, false, 52317), isTrue);
-      expect($fuzzSiteHits[52317], equals(1));
-      expect($fuzzXor(true, true, 52317), isFalse);
-      expect($fuzzSiteHits[52317], equals(3));
+      check($fuzzXor(true, false, 52317)).isTrue();
+      check($fuzzSiteHits[52317]).equals(1);
+      check($fuzzXor(true, true, 52317)).isFalse();
+      check($fuzzSiteHits[52317]).equals(3);
     });
 
-    test(
-      'preserves const RecordLiteral, VariableDeclaration & switch promotions, '
-      'dot shorthands, void/FutureOr<void> arrow bodies, and instruments '
-      '&& / || boolean clauses',
-      () {
-        const sample = '''
+    test('preserves const RecordLiteral, VariableDeclaration & switch '
+        'promotions, dot shorthands, void/FutureOr<void> arrow bodies, and '
+        'instruments && / || boolean clauses', () {
+      const sample = '''
 import 'dart:async';
 
 enum _Color { red, blue }
@@ -469,43 +456,37 @@ int promoteVarDeclAndSwitch(int? a, int? b, Object c, bool flag, _Color col) {
   return total;
 }
 ''';
-        final instrumentor = AstInstrumentor();
-        final out = instrumentor.instrumentSource(sample);
+      final instrumentor = AstInstrumentor();
+      final out = instrumentor.instrumentSource(sample);
 
+      check(out)
         // 1. const RecordLiteral must not be instrumented.
-        expect(out, contains('const (1 == 1, 2 ^ 3)'));
+        ..contains('const (1 == 1, 2 ^ 3)')
         // 2. FutureOr<void> and closure => print(s) must not be wrapped in
         // $fuzzExpr.
-        expect(
-          out,
-          contains('FutureOr<void> syncFutureOrVoid(String s) => print(s);'),
-        );
-        expect(out, contains('Future.sync(() => print(s));'));
+        ..contains('FutureOr<void> syncFutureOrVoid(String s) => print(s);')
+        ..contains('Future.sync(() => print(s));')
         // 3. VariableDeclaration initializer ternary arms stay unwrapped so
         // `promoted` promotes from `int?` to `int`.
-        expect(
-          out,
-          contains(r'int? promoted = $fuzzBool(flag, 55973) ? 10 : 20;'),
-        );
+        ..contains(r'int? promoted = $fuzzBool(flag, 55973) ? 10 : 20;')
         // 4. `switch (a)` with `case null:` and `switch (c)` with `case int():`
         // stay unwrapped so `a` and `c` promote in case bodies.
-        expect(out, contains('switch (a)'));
-        expect(out, isNot(contains(r'$fuzzSwitch(a,')));
-        expect(out, contains('switch (c)'));
-        expect(out, isNot(contains(r'$fuzzSwitch(c,')));
+        ..contains('switch (a)')
+        ..not((it) => it.contains(r'$fuzzSwitch(a,'))
+        ..contains('switch (c)')
+        ..not((it) => it.contains(r'$fuzzSwitch(c,'))
         // 5. Dot shorthands (`col == .red` and `case .blue:`) stay unwrapped so
         // their context type is preserved.
-        expect(out, contains('col == .red'));
-        expect(out, isNot(contains(r'$fuzzEq(col, .red')));
-        expect(out, isNot(contains(r'$fuzzSwitch(col,')));
+        ..contains('col == .red')
+        ..not((it) => it.contains(r'$fuzzEq(col, .red'))
+        ..not((it) => it.contains(r'$fuzzSwitch(col,'))
         // 6. `&&` boolean sub-clauses are individually wrapped with $fuzzBool.
-        expect(out, contains(r'$fuzzBool(total.isEven,'));
-        expect(out, contains(r'$fuzzBool(total.isFinite,'));
+        ..contains(r'$fuzzBool(total.isEven,')
+        ..contains(r'$fuzzBool(total.isFinite,');
 
-        final parsed = parseString(content: out);
-        expect(parsed.errors, isEmpty);
-      },
-    );
+      final parsed = parseString(content: out);
+      check(parsed.errors).isEmpty();
+    });
   });
 
   group('PackageOverlayInstrumentor', () {
@@ -578,17 +559,15 @@ void main() {
         packageRoot: pkgRoot,
       );
 
-      expect(res.packageName, equals('sample_pkg'));
-      expect(res.filesInstrumented, equals(2));
-      expect(res.edgesInserted, greaterThan(0));
-      expect(res.comparesInserted, equals(2));
-      expect(res.switchesInserted, equals(1));
+      check(res.packageName).equals('sample_pkg');
+      check(res.filesInstrumented).equals(2);
+      check(res.edgesInserted).isGreaterThan(0);
+      check(res.comparesInserted).equals(2);
+      check(res.switchesInserted).equals(1);
 
       // Original source in lib/ must remain 100% untouched.
-      expect(
-        File(p.join(pkgRoot, 'lib', 'sample_pkg.dart')).readAsStringSync(),
-        equals(originalLib),
-      );
+      check(File(p.join(pkgRoot, 'lib', 'sample_pkg.dart')).readAsStringSync())
+          .equals(originalLib);
 
       // Instrumented library root has import; part file does not.
       final instRoot = File(p.join(res.instrumentedLibDir, 'sample_pkg.dart'))
@@ -596,12 +575,10 @@ void main() {
       final instPart = File(
         p.join(res.instrumentedLibDir, 'src', 'part_file.dart'),
       ).readAsStringSync();
-      expect(
-        instRoot,
-        contains("import 'package:fuzz/src/fuzz_runtime.dart';"),
-      );
-      expect(instPart, isNot(contains('import ')));
-      expect(instPart, contains(r'$fuzzGt(x, 5,'));
+      check(instRoot).contains("import 'package:fuzz/src/fuzz_runtime.dart';");
+      check(instPart)
+        ..not((it) => it.contains('import '))
+        ..contains(r'$fuzzGt(x, 5,');
 
       // Overlay package_config.json preserves sample_pkg rootUri and remaps
       // packageUri to .dart_tool/fuzz/instrumented/lib/.
@@ -614,15 +591,11 @@ void main() {
         (e) => e['name'] == 'sample_pkg',
       );
       final fuzzEntry = packages.singleWhere((e) => e['name'] == 'fuzz');
-      expect(
-        sampleEntry['rootUri'] as String,
-        equals(p.toUri(pkgRoot).toString()),
-      );
-      expect(
-        sampleEntry['packageUri'],
-        equals('.dart_tool/fuzz/instrumented/lib/'),
-      );
-      expect(fuzzEntry['packageUri'], equals('lib/'));
+      check(sampleEntry['rootUri'] as String)
+          .equals(p.toUri(pkgRoot).toString());
+      check(sampleEntry['packageUri'])
+          .equals('.dart_tool/fuzz/instrumented/lib/');
+      check(fuzzEntry['packageUri']).equals('lib/');
 
       // Verify child Dart VM compiles and executes test/smoke_target.dart
       // using the overlay package_config.json without package:analyzer.
@@ -630,7 +603,7 @@ void main() {
         '--packages=${res.overlayPackageConfigPath}',
         p.join(pkgRoot, 'test', 'smoke_target.dart'),
       ], workingDirectory: pkgRoot);
-      expect(vmRes.exitCode, equals(0), reason: '${vmRes.stderr}');
+      check(vmRes.exitCode, because: '${vmRes.stderr}').equals(0);
 
       // edge_manifest.json records all sites and computes exact per-file stats,
       // including K&R block lines and totalEdges == edgesInserted.
@@ -639,10 +612,9 @@ void main() {
       final manifestMap = jsonDecode(manifestJson) as Map<String, Object?>;
       final sites = (manifestMap['sites'] as List<Object?>)
           .cast<Map<String, Object?>>();
-      expect(
+      check(
         sites.length,
-        equals(res.edgesInserted + res.comparesInserted + res.switchesInserted),
-      );
+      ).equals(res.edgesInserted + res.comparesInserted + res.switchesInserted);
 
       final firstId = sites.first['id'] as int;
       $fuzzEdge(firstId);
@@ -650,17 +622,15 @@ void main() {
         edgeManifestJson: manifestJson,
         siteHits: $fuzzSiteHits,
       );
-      expect(report.packageName, equals('sample_pkg'));
-      expect(report.hitSites, equals(1));
-      expect(report.totalSites, equals(sites.length));
-      expect(report.totalEdges, equals(res.edgesInserted));
-      expect(report.totalCompares, equals(res.comparesInserted));
-      expect(report.files.first.uncoveredLines, contains(7));
-      expect(report.files.map((f) => f.file), [
-        'lib/sample_pkg.dart',
-        'lib/src/part_file.dart',
-      ]);
-      expect(formatCoverageTable(report), contains('lib/sample_pkg.dart'));
+      check(report.packageName).equals('sample_pkg');
+      check(report.hitSites).equals(1);
+      check(report.totalSites).equals(sites.length);
+      check(report.totalEdges).equals(res.edgesInserted);
+      check(report.totalCompares).equals(res.comparesInserted);
+      check(report.files.first.uncoveredLines).contains(7);
+      check(report.files.map((f) => f.file))
+          .deepEquals(['lib/sample_pkg.dart', 'lib/src/part_file.dart']);
+      check(formatCoverageTable(report)).contains('lib/sample_pkg.dart');
     });
 
     test('instruments additionalPackages from package_config.json and isolates '
@@ -741,25 +711,21 @@ void main() {
       );
 
       // Both host_pkg (1 file) and dep_pkg (1 file) must be instrumented.
-      expect(res.filesInstrumented, equals(2));
-      expect(
-        res.overlayPackageConfigPath,
-        equals(p.join(customWorkDir, 'package_config.json')),
-      );
+      check(res.filesInstrumented).equals(2);
+      check(res.overlayPackageConfigPath)
+          .equals(p.join(customWorkDir, 'package_config.json'));
 
       // Default .dart_tool/fuzz directory inside host_pkg must not be created
       // when custom workDir is used.
-      expect(
-        Directory(p.join(hostRoot, '.dart_tool', 'fuzz')).existsSync(),
-        isFalse,
-      );
+      check(Directory(p.join(hostRoot, '.dart_tool', 'fuzz')).existsSync())
+          .isFalse();
 
       // Verify the child Dart VM resolves both instrumented packages and runs.
       final vmRes = await Process.run(Platform.resolvedExecutable, [
         '--packages=${res.overlayPackageConfigPath}',
         p.join(hostRoot, 'test', 'delegate_target.dart'),
       ], workingDirectory: hostRoot);
-      expect(vmRes.exitCode, equals(0), reason: '${vmRes.stderr}');
+      check(vmRes.exitCode, because: '${vmRes.stderr}').equals(0);
 
       // Verify edge_manifest.json includes sites for both host_pkg and dep_pkg.
       final manifestMap = jsonDecode(
@@ -769,11 +735,12 @@ void main() {
           .cast<Map<String, Object?>>()
           .map((s) => s['file'] as String)
           .toSet();
-      expect(siteFiles, contains('lib/host_pkg.dart'));
-      expect(siteFiles, contains('package:dep_pkg/lib/dep_pkg.dart'));
-      expect(res.dictionaryTokensExtracted, greaterThanOrEqualTo(1));
-      expect(File(res.dictionaryPath).existsSync(), isTrue);
-      expect(File(res.dictionaryPath).readAsStringSync(), contains('"YAML"'));
+      check(siteFiles)
+        ..contains('lib/host_pkg.dart')
+        ..contains('package:dep_pkg/lib/dep_pkg.dart');
+      check(res.dictionaryTokensExtracted).isGreaterOrEqual(1);
+      check(File(res.dictionaryPath).existsSync()).isTrue();
+      check(File(res.dictionaryPath).readAsStringSync()).contains('"YAML"');
     });
 
     test(
@@ -802,32 +769,26 @@ int parseHeader(String line, int byte) {
 void wrapFormatException(String label, String input) {}
 ''';
         final instrumentor = AstInstrumentor()..instrumentSource(sample);
-        expect(
-          instrumentor.dictionaryTokens,
-          containsAll([
-            '<<MAGIC>>',
-            'A\r\nB',
-            '%',
-            'Mon',
-            'Tue',
-            'Wed',
-            '0',
-            '\r\n',
-          ]),
-        );
-        expect(instrumentor.dictionaryTokens, isNot(contains('dart:convert')));
-        expect(instrumentor.dictionaryTokens, isNot(contains('HTTP date')));
-        expect(instrumentor.dictionaryTokens, isNot(contains('emoji_0')));
-        expect(instrumentor.dictionaryTokens, isNot(contains(r'\d+\r\n')));
-        expect(
-          instrumentor.dictionaryTokens,
-          isNot(contains('Do not put this error prose in dict')),
-        );
+        check(instrumentor.dictionaryTokens)
+          ..contains('<<MAGIC>>')
+          ..contains('A\r\nB')
+          ..contains('%')
+          ..contains('Mon')
+          ..contains('Tue')
+          ..contains('Wed')
+          ..contains('0')
+          ..contains('\r\n')
+          ..not((it) => it.contains('dart:convert'))
+          ..not((it) => it.contains('HTTP date'))
+          ..not((it) => it.contains('emoji_0'))
+          ..not((it) => it.contains(r'\d+\r\n'))
+          ..not((it) => it.contains('Do not put this error prose in dict'));
 
         final formatted = formatFuzzDictionary(instrumentor.dictionaryTokens);
-        expect(formatted, contains('"<<MAGIC>>"'));
-        expect(formatted, contains(r'"A\x0d\x0aB"'));
-        expect(formatted, contains('"%"'));
+        check(formatted)
+          ..contains('"<<MAGIC>>"')
+          ..contains(r'"A\x0d\x0aB"')
+          ..contains('"%"');
       },
     );
 
@@ -896,27 +857,24 @@ Future<void> fuzzTarget(Uint8List bytes) async {
         'test/fuzz/zero_dep_fuzz.dart',
         corpusDir,
       ]);
-      expect(
+      check(
         res.exitCode,
-        equals(0),
-        reason: 'stdout:\n${res.stdout}\nstderr:\n${res.stderr}',
-      );
-      expect(
+        because: 'stdout:\n${res.stdout}\nstderr:\n${res.stderr}',
+      ).equals(0);
+      check(
         File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'fuzz_entrypoint.dart'))
             .existsSync(),
-        isTrue,
-      );
+      ).isTrue();
       final covReport = jsonDecode(
         File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'coverage_report.json'))
             .readAsStringSync(),
       ) as Map<String, Object?>;
-      expect(covReport['hitSites'] as int, greaterThan(0));
-      expect(
+      check(covReport['hitSites'] as int).isGreaterThan(0);
+      check(
         Directory(p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes'))
             .existsSync(),
-        isTrue,
-      );
-      expect(Directory(corpusDir).existsSync(), isTrue);
+      ).isTrue();
+      check(Directory(corpusDir).existsSync()).isTrue();
     });
 
     test('fuzz run writes crash artifacts into .dart_tool/fuzz/crashes/ by '
@@ -970,7 +928,7 @@ void fuzzTarget(Uint8List bytes) {
         '--runs=5',
         'test/fuzz/crash_fuzz.dart',
       ]);
-      expect(res.exitCode, equals(77), reason: '${res.stderr}');
+      check(res.exitCode, because: '${res.stderr}').equals(77);
 
       // Package root must have zero crash-* files.
       final rootCrashFiles = Directory(pkgRoot)
@@ -978,7 +936,7 @@ void fuzzTarget(Uint8List bytes) {
           .whereType<File>()
           .where((f) => p.basename(f.path).startsWith('crash-'))
           .toList();
-      expect(rootCrashFiles, isEmpty);
+      check(rootCrashFiles).isEmpty();
 
       // .dart_tool/fuzz/crashes/ must contain the crash file.
       final crashesDir = Directory(
@@ -989,7 +947,7 @@ void fuzzTarget(Uint8List bytes) {
           .whereType<File>()
           .where((f) => p.basename(f.path).startsWith('crash-'))
           .toList();
-      expect(crashFiles, hasLength(1));
+      check(crashFiles).length.equals(1);
     });
 
     test('fuzz run supports -artifact_prefix= override and fails fast on '
@@ -1049,13 +1007,12 @@ void fuzzTarget(Uint8List bytes) {
         '--',
         '-artifact_prefix=${customArtifactsDir.path}/',
       ]);
-      expect(customRes.exitCode, equals(77));
-      expect(
+      check(customRes.exitCode).equals(77);
+      check(
         customArtifactsDir.listSync().whereType<File>().where(
           (f) => p.basename(f.path).startsWith('crash-'),
         ),
-        hasLength(1),
-      );
+      ).length.equals(1);
 
       // Missing <target.dart> positional argument exits with code 64.
       final missingTargetRes = await Process.run(Platform.resolvedExecutable, [
@@ -1063,11 +1020,9 @@ void fuzzTarget(Uint8List bytes) {
         'run',
         '--package-root=$pkgRoot',
       ]);
-      expect(missingTargetRes.exitCode, equals(64));
-      expect(
-        missingTargetRes.stderr.toString(),
-        contains('Missing required positional argument: <target.dart>.'),
-      );
+      check(missingTargetRes.exitCode).equals(64);
+      check(missingTargetRes.stderr.toString())
+          .contains('Missing required positional argument: <target.dart>.');
 
       // Missing crash-* reproducer fails fast (exit 64) without creating a
       // directory.
@@ -1079,15 +1034,11 @@ void fuzzTarget(Uint8List bytes) {
         'test/fuzz/crash_fuzz.dart',
         'crash-doesnotexist',
       ]);
-      expect(missingReproRes.exitCode, equals(64));
-      expect(
-        missingReproRes.stderr.toString(),
-        contains('Reproducer file not found'),
-      );
-      expect(
-        Directory(p.join(pkgRoot, 'crash-doesnotexist')).existsSync(),
-        isFalse,
-      );
+      check(missingReproRes.exitCode).equals(64);
+      check(missingReproRes.stderr.toString())
+          .contains('Reproducer file not found');
+      check(Directory(p.join(pkgRoot, 'crash-doesnotexist')).existsSync())
+          .isFalse();
     });
 
     test('fuzz run prefers fuzzTarget over helper main() and rejects scripts '
@@ -1140,7 +1091,7 @@ void main() {
         '--runs=5',
         'test/fuzz/both_fuzz.dart',
       ]);
-      expect(bothRes.exitCode, equals(0), reason: '${bothRes.stderr}');
+      check(bothRes.exitCode, because: '${bothRes.stderr}').equals(0);
 
       final emptyRes = await Process.run(Platform.resolvedExecutable, [
         fuzzBin,
@@ -1150,11 +1101,10 @@ void main() {
         '--runs=5',
         'test/fuzz/empty_fuzz.dart',
       ]);
-      expect(emptyRes.exitCode, equals(64));
-      expect(
+      check(emptyRes.exitCode).equals(64);
+      check(
         emptyRes.stderr.toString(),
-        contains('Target script must declare top-level fuzzTarget(Uint8List)'),
-      );
+      ).contains('Target script must declare top-level fuzzTarget(Uint8List)');
     });
 
     test('fuzz run deduplicates multiple crashes in-process, minimizes '
@@ -1223,35 +1173,29 @@ void fuzzTarget(Uint8List bytes) {
         'test/fuzz/multi_fuzz.dart',
         'corpus',
       ]);
-      expect(
+      check(
         keepGoingRes.exitCode,
-        equals(77),
-        reason: '${keepGoingRes.stderr}',
-      );
-      expect(
-        keepGoingRes.stderr.toString(),
-        contains('DEDUPLICATED CRASH SUMMARY (2 unique crash(es)'),
-      );
-      expect(
-        keepGoingRes.stderr.toString(),
-        contains('[MINIMIZED CRASH #1] (14B -> 1B)'),
-      );
+        because: '${keepGoingRes.stderr}',
+      ).equals(77);
+      check(keepGoingRes.stderr.toString())
+        ..contains('DEDUPLICATED CRASH SUMMARY (2 unique crash(es)')
+        ..contains('[MINIMIZED CRASH #1] (14B -> 1B)');
 
       final reportFile = File(
         p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes_report.json'),
       );
-      expect(reportFile.existsSync(), isTrue);
+      check(reportFile.existsSync()).isTrue();
       final reportJson =
           jsonDecode(reportFile.readAsStringSync()) as Map<String, Object?>;
-      expect(reportJson['package'], equals('multi_crash_pkg'));
-      expect(reportJson['totalUniqueCrashes'], equals(2));
-      expect(reportJson['totalCrashHits'], equals(3));
+      check(reportJson['package']).equals('multi_crash_pkg');
+      check(reportJson['totalUniqueCrashes']).equals(2);
+      check(reportJson['totalCrashHits']).equals(3);
       final crashes = (reportJson['crashes'] as List<Object?>)
           .cast<Map<String, Object?>>();
-      expect(crashes[0]['errorType'], equals('StateError'));
-      expect(crashes[0]['shortestInputLength'], equals(1));
-      expect(crashes[0]['shortestInputDartLiteral'], equals("r'A'"));
-      expect(crashes[1]['errorType'], equals('RangeError'));
+      check(crashes[0]['errorType']).equals('StateError');
+      check(crashes[0]['shortestInputLength']).equals(1);
+      check(crashes[0]['shortestInputDartLiteral']).equals("r'A'");
+      check(crashes[1]['errorType']).equals('RangeError');
 
       // Replaying a single crash file without --runs defaults to 1 iteration.
       final firstCrashPath = crashes[0]['artifactPath'] as String;
@@ -1263,11 +1207,11 @@ void fuzzTarget(Uint8List bytes) {
         'test/fuzz/multi_fuzz.dart',
         firstCrashPath,
       ]);
-      expect(replayRes.exitCode, equals(77), reason: '${replayRes.stderr}');
+      check(replayRes.exitCode, because: '${replayRes.stderr}').equals(77);
       final replayReport =
           jsonDecode(reportFile.readAsStringSync()) as Map<String, Object?>;
-      expect(replayReport['totalUniqueCrashes'], equals(1));
-      expect(replayReport['totalCrashHits'], equals(1));
+      check(replayReport['totalUniqueCrashes']).equals(1);
+      check(replayReport['totalCrashHits']).equals(1);
     });
 
     test(
@@ -1332,24 +1276,20 @@ void fuzzTarget(Uint8List bytes) {
           'test/fuzz/multi_fuzz.dart',
           'corpus',
         ]);
-        expect(
+        check(
           failFastRes.exitCode,
-          equals(77),
-          reason: '${failFastRes.stderr}',
-        );
-        expect(
-          failFastRes.stderr.toString(),
-          contains('UNHANDLED EXCEPTION IN FUZZ TARGET!'),
-        );
+          because: '${failFastRes.stderr}',
+        ).equals(77);
+        check(failFastRes.stderr.toString())
+            .contains('UNHANDLED EXCEPTION IN FUZZ TARGET!');
         final crashesDir = Directory(
           p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes'),
         );
-        expect(crashesDir.listSync().whereType<File>(), hasLength(1));
-        expect(
+        check(crashesDir.listSync().whereType<File>()).length.equals(1);
+        check(
           File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes_report.json'))
               .existsSync(),
-          isFalse,
-        );
+        ).isFalse();
       },
     );
 
@@ -1406,8 +1346,8 @@ int checkValue(int v) {
         final first = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
         );
-        expect(first.cached, isFalse);
-        expect(first.filesInstrumented, equals(1));
+        check(first.cached).isFalse();
+        check(first.filesInstrumented).equals(1);
         final outDart = File(
           p.join(first.instrumentedLibDir, 'cached_pkg.dart'),
         );
@@ -1418,18 +1358,18 @@ int checkValue(int v) {
         final second = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
         );
-        expect(second.cached, isTrue);
-        expect(second.filesInstrumented, equals(first.filesInstrumented));
-        expect(second.edgesInserted, equals(first.edgesInserted));
-        expect(second.comparesInserted, equals(first.comparesInserted));
-        expect(outDart.lastModifiedSync(), equals(mtimeAfterFirst));
+        check(second.cached).isTrue();
+        check(second.filesInstrumented).equals(first.filesInstrumented);
+        check(second.edgesInserted).equals(first.edgesInserted);
+        check(second.comparesInserted).equals(first.comparesInserted);
+        check(outDart.lastModifiedSync()).equals(mtimeAfterFirst);
 
         // 2. `force: true` bypasses cache and re-instruments (`cached: false`).
         final forced = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
           force: true,
         );
-        expect(forced.cached, isFalse);
+        check(forced.cached).isFalse();
 
         // 3. Adding a file in lib/ invalidates cache (`cached: false`).
         final extraFile = File(p.join(pkgRoot, 'lib', 'extra.dart'))
@@ -1437,12 +1377,11 @@ int checkValue(int v) {
         final afterAdd = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
         );
-        expect(afterAdd.cached, isFalse);
-        expect(afterAdd.filesInstrumented, equals(2));
-        expect(
+        check(afterAdd.cached).isFalse();
+        check(afterAdd.filesInstrumented).equals(2);
+        check(
           File(p.join(afterAdd.instrumentedLibDir, 'extra.dart')).existsSync(),
-          isTrue,
-        );
+        ).isTrue();
 
         // 4. Deleting a file in lib/ invalidates cache (`cached: false`) and
         // removes the stale file from instrumented/lib/.
@@ -1450,13 +1389,12 @@ int checkValue(int v) {
         final afterDelete = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
         );
-        expect(afterDelete.cached, isFalse);
-        expect(afterDelete.filesInstrumented, equals(1));
-        expect(
+        check(afterDelete.cached).isFalse();
+        check(afterDelete.filesInstrumented).equals(1);
+        check(
           File(p.join(afterDelete.instrumentedLibDir, 'extra.dart'))
               .existsSync(),
-          isFalse,
-        );
+        ).isFalse();
 
         // 5. Editing an existing file in lib/ (even if mtime moves backward!)
         // invalidates cache (`cached: false`).
@@ -1472,26 +1410,24 @@ int checkValue(int v) {
             await PackageOverlayInstrumentor.instrumentPackage(
               packageRoot: pkgRoot,
             );
-        expect(afterBackwardEdit.cached, isFalse);
-        expect(
-          afterBackwardEdit.comparesInserted,
-          greaterThan(first.comparesInserted),
-        );
+        check(afterBackwardEdit.cached).isFalse();
+        check(afterBackwardEdit.comparesInserted)
+            .isGreaterThan(first.comparesInserted);
 
         // 6. Changing `additionalPackages` invalidates cache (`cached: false`).
         final withDep = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
           additionalPackages: const ['dep_pkg'],
         );
-        expect(withDep.cached, isFalse);
-        expect(withDep.filesInstrumented, equals(2));
+        check(withDep.cached).isFalse();
+        check(withDep.filesInstrumented).equals(2);
 
         final withDepCached =
             await PackageOverlayInstrumentor.instrumentPackage(
               packageRoot: pkgRoot,
               additionalPackages: const ['dep_pkg'],
             );
-        expect(withDepCached.cached, isTrue);
+        check(withDepCached.cached).isTrue();
 
         // 7. Deleting a generated output artifact (`auto.dict` or an individual
         // instrumented `.dart` file) invalidates cache (`cached: false`) and
@@ -1502,8 +1438,8 @@ int checkValue(int v) {
               packageRoot: pkgRoot,
               additionalPackages: const ['dep_pkg'],
             );
-        expect(afterMissingDict.cached, isFalse);
-        expect(File(afterMissingDict.dictionaryPath).existsSync(), isTrue);
+        check(afterMissingDict.cached).isFalse();
+        check(File(afterMissingDict.dictionaryPath).existsSync()).isTrue();
 
         final missingLibOut = File(
           p.join(afterMissingDict.instrumentedLibDir, 'cached_pkg.dart'),
@@ -1513,8 +1449,8 @@ int checkValue(int v) {
               packageRoot: pkgRoot,
               additionalPackages: const ['dep_pkg'],
             );
-        expect(afterMissingLibOut.cached, isFalse);
-        expect(missingLibOut.existsSync(), isTrue);
+        check(afterMissingLibOut.cached).isFalse();
+        check(missingLibOut.existsSync()).isTrue();
 
         // 8. CLI `fuzz instrument` reports "Reused cached" on hit and
         // "Instrumented" with `--force-instrument`.
@@ -1525,11 +1461,9 @@ int checkValue(int v) {
           '--package-root=$pkgRoot',
           '--instrument-packages=dep_pkg',
         ]);
-        expect(cliCached.exitCode, equals(0), reason: '${cliCached.stderr}');
-        expect(
-          cliCached.stdout.toString(),
-          contains('Reused cached package:cached_pkg'),
-        );
+        check(cliCached.exitCode, because: '${cliCached.stderr}').equals(0);
+        check(cliCached.stdout.toString())
+            .contains('Reused cached package:cached_pkg');
 
         final cliForced = await Process.run(Platform.resolvedExecutable, [
           fuzzBin,
@@ -1538,11 +1472,9 @@ int checkValue(int v) {
           '--instrument-packages=dep_pkg',
           '--force-instrument',
         ]);
-        expect(cliForced.exitCode, equals(0), reason: '${cliForced.stderr}');
-        expect(
-          cliForced.stdout.toString(),
-          contains('Instrumented package:cached_pkg'),
-        );
+        check(cliForced.exitCode, because: '${cliForced.stderr}').equals(0);
+        check(cliForced.stdout.toString())
+            .contains('Instrumented package:cached_pkg');
 
         // 9. Moving/renaming the workspace directory invalidates cache (`cached:
         // false`) so absolute `rootUri` paths in `.dart_tool/fuzz/package_config.json`
@@ -1555,11 +1487,9 @@ int checkValue(int v) {
           packageRoot: movedPkgRoot,
           additionalPackages: const ['dep_pkg'],
         );
-        expect(afterMove.cached, isFalse);
-        expect(
-          File(afterMove.overlayPackageConfigPath).readAsStringSync(),
-          contains('cache_workspace_moved'),
-        );
+        check(afterMove.cached).isFalse();
+        check(File(afterMove.overlayPackageConfigPath).readAsStringSync())
+            .contains('cache_workspace_moved');
       },
     );
 
@@ -1629,16 +1559,17 @@ void main() {
         // LHS of the first `+` (`a ? 1 : 0`) has empty context and is wrapped
         // in $fuzzExpr, whereas RHS conditional/switch/clamp branches keep
         // condition tracking ($fuzzBool) without $fuzzExpr widening to `num`.
-        expect(instrumented, contains(r'$fuzzBool(a,'));
-        expect(instrumented, contains(r'$fuzzBool(b,'));
-        expect(instrumented, contains(r'? $fuzzExpr('));
-        expect(instrumented, contains('? x : y)'));
+        check(instrumented)
+          ..contains(r'$fuzzBool(a,')
+          ..contains(r'$fuzzBool(b,')
+          ..contains(r'? $fuzzExpr(')
+          ..contains('? x : y)');
 
         final vmRes = await Process.run(Platform.resolvedExecutable, [
           '--packages=${res.overlayPackageConfigPath}',
           p.join(pkgRoot, 'test', 'run_check.dart'),
         ], workingDirectory: pkgRoot);
-        expect(vmRes.exitCode, equals(0), reason: '${vmRes.stderr}');
+        check(vmRes.exitCode, because: '${vmRes.stderr}').equals(0);
       },
     );
 
@@ -1740,23 +1671,23 @@ void fuzzTarget(Uint8List bytes) {
         '--runs=20',
         'test/fuzz/jwt_fuzz.dart',
       ]);
-      expect(
+      check(
         runRes.exitCode,
-        equals(0),
-        reason: 'stdout:\n${runRes.stdout}\nstderr:\n${runRes.stderr}',
-      );
+        because: 'stdout:\n${runRes.stdout}\nstderr:\n${runRes.stderr}',
+      ).equals(0);
 
       // 1. auto.dict must contain only tokens from reachable files
       // (jwt_parser.dart, jwt_models.dart, and part file jwt_part.dart).
       final dictContent = File(
         p.join(pkgRoot, '.dart_tool', 'fuzz', 'auto.dict'),
       ).readAsStringSync();
-      expect(dictContent, contains('"BEARER_JWT"'));
-      expect(dictContent, contains('"RS256"'));
-      expect(dictContent, contains('"JWT_PART_FORBIDDEN"'));
-      expect(dictContent, isNot(contains('UNRELATED_HTML_DIV')));
-      expect(dictContent, isNot(contains('UNRELATED_HTML_SPAN')));
-      expect(dictContent, isNot(contains('UNRELATED_SEARCH_QUERY')));
+      check(dictContent)
+        ..contains('"BEARER_JWT"')
+        ..contains('"RS256"')
+        ..contains('"JWT_PART_FORBIDDEN"')
+        ..not((it) => it.contains('UNRELATED_HTML_DIV'))
+        ..not((it) => it.contains('UNRELATED_HTML_SPAN'))
+        ..not((it) => it.contains('UNRELATED_SEARCH_QUERY'));
 
       // 2. coverage_report.json and stdout table must include only reachable
       // files and report omitted unreachable files/sites.
@@ -1768,20 +1699,14 @@ void fuzzTarget(Uint8List bytes) {
           .cast<Map<String, Object?>>()
           .map((f) => f['file'] as String)
           .toList();
-      expect(
-        reportedFiles,
-        equals([
-          'lib/src/jwt_models.dart',
-          'lib/src/jwt_parser.dart',
-          'lib/src/jwt_part.dart',
-        ]),
-      );
-      expect(covJson['omittedUnreachableFiles'], equals(2));
-      expect(covJson['omittedUnreachableSites'] as int, greaterThan(0));
-      expect(
-        runRes.stdout as String,
-        contains('Omitted 2 unreachable file(s)'),
-      );
+      check(reportedFiles).deepEquals([
+        'lib/src/jwt_models.dart',
+        'lib/src/jwt_parser.dart',
+        'lib/src/jwt_part.dart',
+      ]);
+      check(covJson['omittedUnreachableFiles']).equals(2);
+      check(covJson['omittedUnreachableSites'] as int).isGreaterThan(0);
+      check(runRes.stdout as String).contains('Omitted 2 unreachable file(s)');
 
       // 3. Switching to a second target (`search_fuzz.dart`) reuses the
       // cached AST overlay while re-scoping auto.dict and coverage_report.
@@ -1793,22 +1718,20 @@ void fuzzTarget(Uint8List bytes) {
         '--runs=20',
         'test/fuzz/search_fuzz.dart',
       ]);
-      expect(
+      check(
         runSearchRes.exitCode,
-        equals(0),
-        reason:
+        because:
             'stdout:\n${runSearchRes.stdout}\nstderr:\n${runSearchRes.stderr}',
-      );
-      expect(
-        runSearchRes.stdout as String,
-        contains('Reused cached AST overlay for package:scoped_pkg'),
-      );
+      ).equals(0);
+      check(runSearchRes.stdout as String)
+          .contains('Reused cached AST overlay for package:scoped_pkg');
       final searchDictContent = File(
         p.join(pkgRoot, '.dart_tool', 'fuzz', 'auto.dict'),
       ).readAsStringSync();
-      expect(searchDictContent, contains('"UNRELATED_SEARCH_QUERY"'));
-      expect(searchDictContent, isNot(contains('BEARER_JWT')));
-      expect(searchDictContent, isNot(contains('UNRELATED_HTML_DIV')));
+      check(searchDictContent)
+        ..contains('"UNRELATED_SEARCH_QUERY"')
+        ..not((it) => it.contains('BEARER_JWT'))
+        ..not((it) => it.contains('UNRELATED_HTML_DIV'));
       final searchCovJson = jsonDecode(
         File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'coverage_report.json'))
             .readAsStringSync(),
@@ -1817,8 +1740,8 @@ void fuzzTarget(Uint8List bytes) {
           .cast<Map<String, Object?>>()
           .map((f) => f['file'] as String)
           .toList();
-      expect(searchFiles, equals(['lib/src/unrelated_search.dart']));
-      expect(searchCovJson['omittedUnreachableFiles'], equals(4));
+      check(searchFiles).deepEquals(['lib/src/unrelated_search.dart']);
+      check(searchCovJson['omittedUnreachableFiles']).equals(4);
 
       // 4. Running `fuzz instrument` (no target) reuses the cached AST
       // overlay (`Reused cached`) and restores the full-package auto.dict.
@@ -1827,18 +1750,17 @@ void fuzzTarget(Uint8List bytes) {
         'instrument',
         '--package-root=$pkgRoot',
       ]);
-      expect(instRes.exitCode, equals(0), reason: '${instRes.stderr}');
-      expect(
-        instRes.stdout as String,
-        contains('Reused cached package:scoped_pkg'),
-      );
+      check(instRes.exitCode, because: '${instRes.stderr}').equals(0);
+      check(instRes.stdout as String)
+          .contains('Reused cached package:scoped_pkg');
       final fullDictContent = File(
         p.join(pkgRoot, '.dart_tool', 'fuzz', 'auto.dict'),
       ).readAsStringSync();
-      expect(fullDictContent, contains('"BEARER_JWT"'));
-      expect(fullDictContent, contains('"JWT_PART_FORBIDDEN"'));
-      expect(fullDictContent, contains('"UNRELATED_HTML_DIV"'));
-      expect(fullDictContent, contains('"UNRELATED_SEARCH_QUERY"'));
+      check(fullDictContent)
+        ..contains('"BEARER_JWT"')
+        ..contains('"JWT_PART_FORBIDDEN"')
+        ..contains('"UNRELATED_HTML_DIV"')
+        ..contains('"UNRELATED_SEARCH_QUERY"');
     });
   });
 }
