@@ -37,10 +37,11 @@ void main() {
         RangeError('index out of range'),
         traceCol10,
       );
-      check(first.isNew).isTrue();
-      check(first.isMinimized).isFalse();
-      check(first.record.index).equals(1);
-      check(first.record.hitCount).equals(1);
+      check(first)
+        ..has((r) => r.isNew, 'isNew').isTrue()
+        ..has((r) => r.isMinimized, 'isMinimized').isFalse()
+        ..has((r) => r.record.index, 'record.index').equals(1)
+        ..has((r) => r.record.hitCount, 'record.hitCount').equals(1);
       check(File(first.record.artifactPath).readAsBytesSync())
           .deepEquals(longInput);
 
@@ -52,12 +53,19 @@ void main() {
         RangeError('index out of range'),
         traceCol99,
       );
-      check(second.isNew).isFalse();
-      check(second.isMinimized).isTrue();
-      check(second.previousLength).equals(longInput.length);
-      check(second.record.index).equals(1);
-      check(second.record.hitCount).equals(2);
-      check(second.record.shortestInput).deepEquals(shortInput);
+      check(second)
+        ..has((r) => r.isNew, 'isNew').isFalse()
+        ..has((r) => r.isMinimized, 'isMinimized').isTrue()
+        ..has(
+          (r) => r.previousLength,
+          'previousLength',
+        ).equals(longInput.length)
+        ..has((r) => r.record.index, 'record.index').equals(1)
+        ..has((r) => r.record.hitCount, 'record.hitCount').equals(2)
+        ..has(
+          (r) => r.record.shortestInput,
+          'record.shortestInput',
+        ).deepEquals(shortInput);
       check(File(first.record.artifactPath).readAsBytesSync())
           .deepEquals(shortInput);
 
@@ -68,13 +76,15 @@ void main() {
         RangeError('index out of range'),
         traceCol10,
       );
-      check(third.isNew).isFalse();
-      check(third.isMinimized).isFalse();
-      check(third.record.hitCount).equals(3);
+      check(third)
+        ..has((r) => r.isNew, 'isNew').isFalse()
+        ..has((r) => r.isMinimized, 'isMinimized').isFalse()
+        ..has((r) => r.record.hitCount, 'record.hitCount').equals(3);
       check(File(first.record.artifactPath).readAsBytesSync())
           .deepEquals(shortInput);
-      check(dedup.records).length.equals(1);
-      check(dedup.totalHits).equals(3);
+      check(dedup)
+        ..has((d) => d.records, 'records').length.equals(1)
+        ..has((d) => d.totalHits, 'totalHits').equals(3);
     });
 
     test('disambiguates crashes in shared helper packages by targetPackage '
@@ -106,25 +116,28 @@ void main() {
         traceB,
       );
 
-      check(resA.isNew).isTrue();
-      check(resB.isNew).isTrue();
+      check(resA)
+        ..has((r) => r.isNew, 'isNew').isTrue()
+        ..has((r) => r.record.primaryBlame, 'record.primaryBlame').equals(
+          'ScssParser.interpolation (package:sass/src/parse/scss.dart:120)',
+        );
+      check(resB)
+        ..has((r) => r.isNew, 'isNew').isTrue()
+        ..has((r) => r.record.primaryBlame, 'record.primaryBlame').equals(
+          'StylesheetParser.mediaQuery '
+          '(package:sass/src/parse/stylesheet.dart:250)',
+        );
       check(dedup.records).length.equals(2);
-      check(resA.record.primaryBlame).equals(
-        'ScssParser.interpolation (package:sass/src/parse/scss.dart:120)',
-      );
-      check(resB.record.primaryBlame).equals(
-        'StylesheetParser.mediaQuery '
-        '(package:sass/src/parse/stylesheet.dart:250)',
-      );
 
       final reportPath = p.join(d.sandbox, 'crashes_report.json');
       dedup.writeReportJson(reportPath);
       final jsonMap = jsonDecode(
         File(reportPath).readAsStringSync(),
       ) as Map<String, Object?>;
-      check(jsonMap['package']).equals('sass');
-      check(jsonMap['totalUniqueCrashes']).equals(2);
-      check(jsonMap['totalCrashHits']).equals(2);
+      check(jsonMap)
+        ..['package'].equals('sass')
+        ..['totalUniqueCrashes'].equals(2)
+        ..['totalCrashHits'].equals(2);
     });
 
     test('formatDartInputLiteral formats printable UTF-8 and binary inputs '

@@ -139,10 +139,12 @@ void main() {
     test(
       'boundary corpora include 64-bit signed overflow and 65-bit hex wrap',
       () {
-        check(fuzzBoundaryInts).contains(-9223372036854775808);
-        check(fuzzBoundaryInts).contains(9223372036854775807);
-        check(fuzzBoundaryHexStrings).contains('8000000000000000');
-        check(fuzzBoundaryHexStrings).contains('10000000000000000');
+        check(fuzzBoundaryInts)
+          ..contains(-9223372036854775808)
+          ..contains(9223372036854775807);
+        check(fuzzBoundaryHexStrings)
+          ..contains('8000000000000000')
+          ..contains('10000000000000000');
       },
     );
   });

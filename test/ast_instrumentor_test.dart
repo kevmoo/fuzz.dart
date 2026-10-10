@@ -51,9 +51,10 @@ int check(int a, String s) {
 
         final parsed = parseString(content: out);
         check(parsed.errors).isEmpty();
-        check(instrumentor.edgesInserted).isGreaterThan(0);
-        check(instrumentor.comparesInserted).equals(2);
-        check(instrumentor.switchesInserted).equals(1);
+        check(instrumentor)
+          ..has((i) => i.edgesInserted, 'edgesInserted').isGreaterThan(0)
+          ..has((i) => i.comparesInserted, 'comparesInserted').equals(2)
+          ..has((i) => i.switchesInserted, 'switchesInserted').equals(1);
       },
     );
 
@@ -92,8 +93,9 @@ const int kVersion = 1;
 ''';
       final barrelInstrumentor = AstInstrumentor();
       final barrelOut = barrelInstrumentor.instrumentSource(barrelSample);
-      check(barrelOut).equals(barrelSample);
-      check(barrelOut).not((it) => it.contains('fuzz_runtime.dart'));
+      check(barrelOut)
+        ..equals(barrelSample)
+        ..not((it) => it.contains('fuzz_runtime.dart'));
 
       const zeroEditPartOfSample = '''
 part of 'parent.dart';
@@ -103,8 +105,9 @@ const int kPartConst = 42;
       final zeroEditPartOfOut = AstInstrumentor().instrumentSource(
         zeroEditPartOfSample,
       );
-      check(zeroEditPartOfOut).equals(zeroEditPartOfSample);
-      check(zeroEditPartOfOut).not((it) => it.contains('ignore_for_file'));
+      check(zeroEditPartOfOut)
+        ..equals(zeroEditPartOfSample)
+        ..not((it) => it.contains('ignore_for_file'));
 
       const parentWithPartSample = '''
 library parent;
@@ -140,8 +143,9 @@ int promotedLength(String? value, bool flag) {
           ..contains('flag == true')
           ..not((it) => it.contains(r'$fuzzNe(value, null'))
           ..not((it) => it.contains(r'$fuzzEq(flag, true'));
-        check(instrumentor.comparesInserted).equals(0);
-        check(instrumentor.edgesInserted).isGreaterThan(0);
+        check(instrumentor)
+          ..has((i) => i.comparesInserted, 'comparesInserted').equals(0)
+          ..has((i) => i.edgesInserted, 'edgesInserted').isGreaterThan(0);
       },
     );
 
@@ -237,8 +241,9 @@ String describeCode(int code) => switch (code) {
 
         final parsed = parseString(content: out);
         check(parsed.errors).isEmpty();
-        check(instrumentor.edgesInserted).equals(5);
-        check(instrumentor.comparesInserted).equals(1);
+        check(instrumentor)
+          ..has((i) => i.edgesInserted, 'edgesInserted').equals(5)
+          ..has((i) => i.comparesInserted, 'comparesInserted').equals(1);
       },
     );
 
@@ -258,10 +263,11 @@ int clampSign(int x, bool neg, bool zero) =>
 
       final parsed = parseString(content: out);
       check(parsed.errors).isEmpty();
-      // 1 arrow body + 2 outer ternary arms + 2 inner ternary arms = 5 edges.
-      check(instrumentor.edgesInserted).equals(5);
+      // 1 arrow body + 2 outer ternary arms + 2 inner ternary arms = 5 edges;
       // 2 non-binary conditions (`zero` and `neg`) = 2 cmp sites.
-      check(instrumentor.comparesInserted).equals(2);
+      check(instrumentor)
+        ..has((i) => i.edgesInserted, 'edgesInserted').equals(5)
+        ..has((i) => i.comparesInserted, 'comparesInserted').equals(2);
     });
 
     test(r'wraps non-binary conditions in $fuzzBool while preserving type '
@@ -322,10 +328,11 @@ int sumUp(List<int> xs) {
 
         final parsed = parseString(content: out);
         check(parsed.errors).isEmpty();
-        // 1 function body + 3 braceless loop bodies = 4 edges.
-        check(instrumentor.edgesInserted).equals(4);
+        // 1 function body + 3 braceless loop bodies = 4 edges;
         // 3 binary loop conditions = 3 cmp sites.
-        check(instrumentor.comparesInserted).equals(3);
+        check(instrumentor)
+          ..has((i) => i.edgesInserted, 'edgesInserted').equals(4)
+          ..has((i) => i.comparesInserted, 'comparesInserted').equals(3);
       },
     );
 
@@ -559,11 +566,12 @@ void main() {
         packageRoot: pkgRoot,
       );
 
-      check(res.packageName).equals('sample_pkg');
-      check(res.filesInstrumented).equals(2);
-      check(res.edgesInserted).isGreaterThan(0);
-      check(res.comparesInserted).equals(2);
-      check(res.switchesInserted).equals(1);
+      check(res)
+        ..has((r) => r.packageName, 'packageName').equals('sample_pkg')
+        ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(2)
+        ..has((r) => r.edgesInserted, 'edgesInserted').isGreaterThan(0)
+        ..has((r) => r.comparesInserted, 'comparesInserted').equals(2)
+        ..has((r) => r.switchesInserted, 'switchesInserted').equals(1);
 
       // Original source in lib/ must remain 100% untouched.
       check(File(p.join(pkgRoot, 'lib', 'sample_pkg.dart')).readAsStringSync())
@@ -591,11 +599,10 @@ void main() {
         (e) => e['name'] == 'sample_pkg',
       );
       final fuzzEntry = packages.singleWhere((e) => e['name'] == 'fuzz');
-      check(sampleEntry['rootUri'] as String)
-          .equals(p.toUri(pkgRoot).toString());
-      check(sampleEntry['packageUri'])
-          .equals('.dart_tool/fuzz/instrumented/lib/');
-      check(fuzzEntry['packageUri']).equals('lib/');
+      check(sampleEntry)
+        ..['rootUri'].equals(p.toUri(pkgRoot).toString())
+        ..['packageUri'].equals('.dart_tool/fuzz/instrumented/lib/');
+      check(fuzzEntry)['packageUri'].equals('lib/');
 
       // Verify child Dart VM compiles and executes test/smoke_target.dart
       // using the overlay package_config.json without package:analyzer.
@@ -603,7 +610,7 @@ void main() {
         '--packages=${res.overlayPackageConfigPath}',
         p.join(pkgRoot, 'test', 'smoke_target.dart'),
       ], workingDirectory: pkgRoot);
-      check(vmRes.exitCode, because: '${vmRes.stderr}').equals(0);
+      check(because: '${vmRes.stderr}', vmRes.exitCode).equals(0);
 
       // edge_manifest.json records all sites and computes exact per-file stats,
       // including K&R block lines and totalEdges == edgesInserted.
@@ -622,11 +629,15 @@ void main() {
         edgeManifestJson: manifestJson,
         siteHits: $fuzzSiteHits,
       );
-      check(report.packageName).equals('sample_pkg');
-      check(report.hitSites).equals(1);
-      check(report.totalSites).equals(sites.length);
-      check(report.totalEdges).equals(res.edgesInserted);
-      check(report.totalCompares).equals(res.comparesInserted);
+      check(report)
+        ..has((r) => r.packageName, 'packageName').equals('sample_pkg')
+        ..has((r) => r.hitSites, 'hitSites').equals(1)
+        ..has((r) => r.totalSites, 'totalSites').equals(sites.length)
+        ..has((r) => r.totalEdges, 'totalEdges').equals(res.edgesInserted)
+        ..has(
+          (r) => r.totalCompares,
+          'totalCompares',
+        ).equals(res.comparesInserted);
       check(report.files.first.uncoveredLines).contains(7);
       check(report.files.map((f) => f.file))
           .deepEquals(['lib/sample_pkg.dart', 'lib/src/part_file.dart']);
@@ -711,9 +722,12 @@ void main() {
       );
 
       // Both host_pkg (1 file) and dep_pkg (1 file) must be instrumented.
-      check(res.filesInstrumented).equals(2);
-      check(res.overlayPackageConfigPath)
-          .equals(p.join(customWorkDir, 'package_config.json'));
+      check(res)
+        ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(2)
+        ..has(
+          (r) => r.overlayPackageConfigPath,
+          'overlayPackageConfigPath',
+        ).equals(p.join(customWorkDir, 'package_config.json'));
 
       // Default .dart_tool/fuzz directory inside host_pkg must not be created
       // when custom workDir is used.
@@ -725,7 +739,7 @@ void main() {
         '--packages=${res.overlayPackageConfigPath}',
         p.join(hostRoot, 'test', 'delegate_target.dart'),
       ], workingDirectory: hostRoot);
-      check(vmRes.exitCode, because: '${vmRes.stderr}').equals(0);
+      check(because: '${vmRes.stderr}', vmRes.exitCode).equals(0);
 
       // Verify edge_manifest.json includes sites for both host_pkg and dep_pkg.
       final manifestMap = jsonDecode(
@@ -858,8 +872,8 @@ Future<void> fuzzTarget(Uint8List bytes) async {
         corpusDir,
       ]);
       check(
-        res.exitCode,
         because: 'stdout:\n${res.stdout}\nstderr:\n${res.stderr}',
+        res.exitCode,
       ).equals(0);
       check(
         File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'fuzz_entrypoint.dart'))
@@ -869,7 +883,7 @@ Future<void> fuzzTarget(Uint8List bytes) async {
         File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'coverage_report.json'))
             .readAsStringSync(),
       ) as Map<String, Object?>;
-      check(covReport['hitSites'] as int).isGreaterThan(0);
+      check(covReport)['hitSites'].isA<int>().isGreaterThan(0);
       check(
         Directory(p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes'))
             .existsSync(),
@@ -928,7 +942,7 @@ void fuzzTarget(Uint8List bytes) {
         '--runs=5',
         'test/fuzz/crash_fuzz.dart',
       ]);
-      check(res.exitCode, because: '${res.stderr}').equals(77);
+      check(because: '${res.stderr}', res.exitCode).equals(77);
 
       // Package root must have zero crash-* files.
       final rootCrashFiles = Directory(pkgRoot)
@@ -1091,7 +1105,7 @@ void main() {
         '--runs=5',
         'test/fuzz/both_fuzz.dart',
       ]);
-      check(bothRes.exitCode, because: '${bothRes.stderr}').equals(0);
+      check(because: '${bothRes.stderr}', bothRes.exitCode).equals(0);
 
       final emptyRes = await Process.run(Platform.resolvedExecutable, [
         fuzzBin,
@@ -1174,8 +1188,8 @@ void fuzzTarget(Uint8List bytes) {
         'corpus',
       ]);
       check(
-        keepGoingRes.exitCode,
         because: '${keepGoingRes.stderr}',
+        keepGoingRes.exitCode,
       ).equals(77);
       check(keepGoingRes.stderr.toString())
         ..contains('DEDUPLICATED CRASH SUMMARY (2 unique crash(es)')
@@ -1187,15 +1201,17 @@ void fuzzTarget(Uint8List bytes) {
       check(reportFile.existsSync()).isTrue();
       final reportJson =
           jsonDecode(reportFile.readAsStringSync()) as Map<String, Object?>;
-      check(reportJson['package']).equals('multi_crash_pkg');
-      check(reportJson['totalUniqueCrashes']).equals(2);
-      check(reportJson['totalCrashHits']).equals(3);
+      check(reportJson)
+        ..['package'].equals('multi_crash_pkg')
+        ..['totalUniqueCrashes'].equals(2)
+        ..['totalCrashHits'].equals(3);
       final crashes = (reportJson['crashes'] as List<Object?>)
           .cast<Map<String, Object?>>();
-      check(crashes[0]['errorType']).equals('StateError');
-      check(crashes[0]['shortestInputLength']).equals(1);
-      check(crashes[0]['shortestInputDartLiteral']).equals("r'A'");
-      check(crashes[1]['errorType']).equals('RangeError');
+      check(crashes[0])
+        ..['errorType'].equals('StateError')
+        ..['shortestInputLength'].equals(1)
+        ..['shortestInputDartLiteral'].equals("r'A'");
+      check(crashes[1])['errorType'].equals('RangeError');
 
       // Replaying a single crash file without --runs defaults to 1 iteration.
       final firstCrashPath = crashes[0]['artifactPath'] as String;
@@ -1207,11 +1223,12 @@ void fuzzTarget(Uint8List bytes) {
         'test/fuzz/multi_fuzz.dart',
         firstCrashPath,
       ]);
-      check(replayRes.exitCode, because: '${replayRes.stderr}').equals(77);
+      check(because: '${replayRes.stderr}', replayRes.exitCode).equals(77);
       final replayReport =
           jsonDecode(reportFile.readAsStringSync()) as Map<String, Object?>;
-      check(replayReport['totalUniqueCrashes']).equals(1);
-      check(replayReport['totalCrashHits']).equals(1);
+      check(replayReport)
+        ..['totalUniqueCrashes'].equals(1)
+        ..['totalCrashHits'].equals(1);
     });
 
     test(
@@ -1277,8 +1294,8 @@ void fuzzTarget(Uint8List bytes) {
           'corpus',
         ]);
         check(
-          failFastRes.exitCode,
           because: '${failFastRes.stderr}',
+          failFastRes.exitCode,
         ).equals(77);
         check(failFastRes.stderr.toString())
             .contains('UNHANDLED EXCEPTION IN FUZZ TARGET!');
@@ -1346,8 +1363,9 @@ int checkValue(int v) {
         final first = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
         );
-        check(first.cached).isFalse();
-        check(first.filesInstrumented).equals(1);
+        check(first)
+          ..has((r) => r.cached, 'cached').isFalse()
+          ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(1);
         final outDart = File(
           p.join(first.instrumentedLibDir, 'cached_pkg.dart'),
         );
@@ -1358,10 +1376,20 @@ int checkValue(int v) {
         final second = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
         );
-        check(second.cached).isTrue();
-        check(second.filesInstrumented).equals(first.filesInstrumented);
-        check(second.edgesInserted).equals(first.edgesInserted);
-        check(second.comparesInserted).equals(first.comparesInserted);
+        check(second)
+          ..has((r) => r.cached, 'cached').isTrue()
+          ..has(
+            (r) => r.filesInstrumented,
+            'filesInstrumented',
+          ).equals(first.filesInstrumented)
+          ..has(
+            (r) => r.edgesInserted,
+            'edgesInserted',
+          ).equals(first.edgesInserted)
+          ..has(
+            (r) => r.comparesInserted,
+            'comparesInserted',
+          ).equals(first.comparesInserted);
         check(outDart.lastModifiedSync()).equals(mtimeAfterFirst);
 
         // 2. `force: true` bypasses cache and re-instruments (`cached: false`).
@@ -1377,8 +1405,9 @@ int checkValue(int v) {
         final afterAdd = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
         );
-        check(afterAdd.cached).isFalse();
-        check(afterAdd.filesInstrumented).equals(2);
+        check(afterAdd)
+          ..has((r) => r.cached, 'cached').isFalse()
+          ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(2);
         check(
           File(p.join(afterAdd.instrumentedLibDir, 'extra.dart')).existsSync(),
         ).isTrue();
@@ -1389,8 +1418,9 @@ int checkValue(int v) {
         final afterDelete = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
         );
-        check(afterDelete.cached).isFalse();
-        check(afterDelete.filesInstrumented).equals(1);
+        check(afterDelete)
+          ..has((r) => r.cached, 'cached').isFalse()
+          ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(1);
         check(
           File(p.join(afterDelete.instrumentedLibDir, 'extra.dart'))
               .existsSync(),
@@ -1410,17 +1440,21 @@ int checkValue(int v) {
             await PackageOverlayInstrumentor.instrumentPackage(
               packageRoot: pkgRoot,
             );
-        check(afterBackwardEdit.cached).isFalse();
-        check(afterBackwardEdit.comparesInserted)
-            .isGreaterThan(first.comparesInserted);
+        check(afterBackwardEdit)
+          ..has((r) => r.cached, 'cached').isFalse()
+          ..has(
+            (r) => r.comparesInserted,
+            'comparesInserted',
+          ).isGreaterThan(first.comparesInserted);
 
         // 6. Changing `additionalPackages` invalidates cache (`cached: false`).
         final withDep = await PackageOverlayInstrumentor.instrumentPackage(
           packageRoot: pkgRoot,
           additionalPackages: const ['dep_pkg'],
         );
-        check(withDep.cached).isFalse();
-        check(withDep.filesInstrumented).equals(2);
+        check(withDep)
+          ..has((r) => r.cached, 'cached').isFalse()
+          ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(2);
 
         final withDepCached =
             await PackageOverlayInstrumentor.instrumentPackage(
@@ -1461,7 +1495,7 @@ int checkValue(int v) {
           '--package-root=$pkgRoot',
           '--instrument-packages=dep_pkg',
         ]);
-        check(cliCached.exitCode, because: '${cliCached.stderr}').equals(0);
+        check(because: '${cliCached.stderr}', cliCached.exitCode).equals(0);
         check(cliCached.stdout.toString())
             .contains('Reused cached package:cached_pkg');
 
@@ -1472,7 +1506,7 @@ int checkValue(int v) {
           '--instrument-packages=dep_pkg',
           '--force-instrument',
         ]);
-        check(cliForced.exitCode, because: '${cliForced.stderr}').equals(0);
+        check(because: '${cliForced.stderr}', cliForced.exitCode).equals(0);
         check(cliForced.stdout.toString())
             .contains('Instrumented package:cached_pkg');
 
@@ -1569,7 +1603,7 @@ void main() {
           '--packages=${res.overlayPackageConfigPath}',
           p.join(pkgRoot, 'test', 'run_check.dart'),
         ], workingDirectory: pkgRoot);
-        check(vmRes.exitCode, because: '${vmRes.stderr}').equals(0);
+        check(because: '${vmRes.stderr}', vmRes.exitCode).equals(0);
       },
     );
 
@@ -1672,8 +1706,8 @@ void fuzzTarget(Uint8List bytes) {
         'test/fuzz/jwt_fuzz.dart',
       ]);
       check(
-        runRes.exitCode,
         because: 'stdout:\n${runRes.stdout}\nstderr:\n${runRes.stderr}',
+        runRes.exitCode,
       ).equals(0);
 
       // 1. auto.dict must contain only tokens from reachable files
@@ -1704,8 +1738,9 @@ void fuzzTarget(Uint8List bytes) {
         'lib/src/jwt_parser.dart',
         'lib/src/jwt_part.dart',
       ]);
-      check(covJson['omittedUnreachableFiles']).equals(2);
-      check(covJson['omittedUnreachableSites'] as int).isGreaterThan(0);
+      check(covJson)
+        ..['omittedUnreachableFiles'].equals(2)
+        ..['omittedUnreachableSites'].isA<int>().isGreaterThan(0);
       check(runRes.stdout as String).contains('Omitted 2 unreachable file(s)');
 
       // 3. Switching to a second target (`search_fuzz.dart`) reuses the
@@ -1719,9 +1754,9 @@ void fuzzTarget(Uint8List bytes) {
         'test/fuzz/search_fuzz.dart',
       ]);
       check(
-        runSearchRes.exitCode,
         because:
             'stdout:\n${runSearchRes.stdout}\nstderr:\n${runSearchRes.stderr}',
+        runSearchRes.exitCode,
       ).equals(0);
       check(runSearchRes.stdout as String)
           .contains('Reused cached AST overlay for package:scoped_pkg');
@@ -1741,7 +1776,7 @@ void fuzzTarget(Uint8List bytes) {
           .map((f) => f['file'] as String)
           .toList();
       check(searchFiles).deepEquals(['lib/src/unrelated_search.dart']);
-      check(searchCovJson['omittedUnreachableFiles']).equals(4);
+      check(searchCovJson)['omittedUnreachableFiles'].equals(4);
 
       // 4. Running `fuzz instrument` (no target) reuses the cached AST
       // overlay (`Reused cached`) and restores the full-package auto.dict.
@@ -1750,7 +1785,7 @@ void fuzzTarget(Uint8List bytes) {
         'instrument',
         '--package-root=$pkgRoot',
       ]);
-      check(instRes.exitCode, because: '${instRes.stderr}').equals(0);
+      check(because: '${instRes.stderr}', instRes.exitCode).equals(0);
       check(instRes.stdout as String)
           .contains('Reused cached package:scoped_pkg');
       final fullDictContent = File(
