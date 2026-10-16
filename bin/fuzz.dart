@@ -5,6 +5,7 @@ import 'package:analyzer/dart/ast/ast.dart';
 import 'package:args/args.dart';
 import 'package:args/command_runner.dart';
 import 'package:cli_util/cli_util.dart';
+import 'package:fuzz/src/codegen_fuzzer.dart';
 import 'package:fuzz/src/coverage_report.dart';
 import 'package:fuzz/src/crash_deduplicator.dart';
 import 'package:fuzz/src/instrument_ast.dart';
@@ -18,6 +19,7 @@ Future<void> main(List<String> args) async {
           'Coverage-guided libFuzzer + dart:ffi AST instrumentor and pure-Dart '
               'parser fuzzing tool.',
         )
+        ..addCommand(_CodegenCommand())
         ..addCommand(_InstrumentCommand())
         ..addCommand(_RunCommand());
 
@@ -508,5 +510,74 @@ void main(List<String> args) {
       ..write(summary)
       ..writeln('Crash report written to: ${crashesReportFile.path}');
     return code != 0 ? code : 77;
+  }
+}
+
+class _CodegenCommand extends Command<int> {
+  @override
+  String get name => 'codegen';
+
+  @override
+  String get description =>
+      'Runs an AST-combinatorial codegen fuzz script against a target package '
+      'without modifying its pubspec.yaml.';
+
+  @override
+  String get invocation =>
+      '${runner!.executableName} $name [arguments] <script.dart> [args...]';
+
+  _CodegenCommand() {
+    argParser
+      ..addOption(
+        'package-root',
+        help: 'Target package directory containing the code generator.',
+        defaultsTo: '.',
+      )
+      ..addOption(
+        'work-dir',
+        help:
+            'Directory for merged package_config.json '
+            '(defaults to <package-root>/.dart_tool/fuzz).',
+      );
+  }
+
+  @override
+  Future<int> run() async {
+    final opts = argResults!;
+    if (opts.rest.isEmpty || opts.rest.first.startsWith('-')) {
+      usageException('Missing required positional argument: <script.dart>.');
+    }
+    final pkgRoot = p.normalize(p.absolute(opts['package-root'] as String));
+    final rawScript = opts.rest.first;
+    final absCandidate = p.normalize(p.absolute(rawScript));
+    final pkgCandidate = p.normalize(p.join(pkgRoot, rawScript));
+    final scriptPath = File(absCandidate).existsSync()
+        ? absCandidate
+        : (File(pkgCandidate).existsSync()
+              ? pkgCandidate
+              : usageException('Target script not found: $absCandidate'));
+    final workDirOpt = opts['work-dir'] as String?;
+    final configPath = await prepareCodegenPackageConfig(
+      packageRoot: pkgRoot,
+      workDir: workDirOpt,
+    );
+    final dartBin =
+        dartExecutable ??
+        (throw StateError('Could not locate the `dart` executable.'));
+    final proc = await Process.start(
+      dartBin,
+      [
+        '--enable-asserts',
+        '--packages=$configPath',
+        scriptPath,
+        ...opts.rest.sublist(1),
+      ],
+      workingDirectory: pkgRoot,
+      environment: workDirOpt != null && workDirOpt.isNotEmpty
+          ? {'FUZZ_WORK_DIR': p.normalize(p.absolute(workDirOpt))}
+          : null,
+      mode: ProcessStartMode.inheritStdio,
+    );
+    return proc.exitCode;
   }
 }

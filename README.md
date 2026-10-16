@@ -5,7 +5,7 @@
 Coverage-guided `libFuzzer` + `dart:ffi` AST instrumentor and pure-Dart parser
 fuzzing combinators for Dart packages.
 
-`package:fuzz` provides two complementary fuzzing modes:
+`package:fuzz` provides three complementary fuzzing modes:
 
 1. **Coverage-Guided AST Fuzzing (`fuzz run`, `--mode=cgf` default)**:
    Automatically rewrites the target package's `lib/` directory into a
@@ -25,6 +25,15 @@ fuzzing combinators for Dart packages.
    `compiler-rt` (`libclang_rt.fuzzer_no_main`) is unavailable (such as stock
    macOS Xcode Command Line Tools without Homebrew `llvm`, Windows CI runners,
    or zero-native-toolchain `dart test` smoke runs).
+3. **AST-Combinatorial Code Generator Fuzzing (`fuzz codegen` &
+   `verifyCodegenBatch`)**: Stress-tests `source_gen`, `build`, and `analyzer`
+   code generators by permuting Dart declaration axes (`cartesianProduct`) and
+   validating batches of generated `.g.dart` parts in a single shared
+   `AnalysisContextCollection` and a single batched `Isolate.spawnUri` call—with
+   automatic binary-search bisection of generator crashes, static analyzer error
+   and warning verification (`session.getErrors`), and isolated runtime
+   round-trip checks. See
+   [`.agents/skills/codegen-fuzz/SKILL.md`](.agents/skills/codegen-fuzz/SKILL.md).
 
 ## Usage
 

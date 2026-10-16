@@ -6,8 +6,26 @@ package:fuzz/fuzz.dart:
   fuzzBoundaryHexStrings (static const getter: List<String>)
   fuzzBoundaryInts (static const getter: List<int>)
   captureStreamZoneErrors (function: Future<({bool completed, List<T> items, Object? streamError, Object? uncaughtZoneError})> Function<S, T>(Stream<S>, StreamTransformer<S, T>, {Duration timeout}))
+  cartesianProduct (function: List<Map<K, V>> Function<K, V>(Map<K, List<V>>))
+  formatCodegenBatchReport (function: String Function(({List<({String caseId, String declarations, String? generatedCode, CodegenIssueKind kind, String message})> issues, int passedCases, int totalCases})))
   verifyChunkSplitEquivalence (function: void Function<T>({bool Function(T, T)? equals, required List<int> Function(Random) generateEncodedStream, int iterations, int maxStep, required T Function(Iterable<List<int>>) parseChunked, required T Function(List<int>) parseFull, int seed}))
+  verifyCodegenBatch (function: Future<({List<({String caseId, String declarations, String? generatedCode, CodegenIssueKind kind, String message})> issues, int passedCases, int totalCases})> Function({Map<String, String> auxiliaryFiles, required List<CodegenCase> cases, bool failOnIssues, required FutureOr<String?> Function(LibraryElement, String) generatePart, List<String> imports, bool includeWarnings, Duration isolateTimeout, String packageRoot, String preamble, String? workDir}))
   verifyNoUnescapedCrlf (function: void Function(String, {String context}))
+  CodegenCase (class extends Object, final):
+    new (const constructor: CodegenCase Function({required String declarations, Pattern? expectedError, required String id, String? runtimeCheck}))
+    declarations (getter: String)
+    expectedError (getter: Pattern?)
+    id (getter: String)
+    runtimeCheck (getter: String?)
+  CodegenIssueKind (enum):
+    generatorException (enum constant: CodegenIssueKind)
+    runtimeFailure (enum constant: CodegenIssueKind)
+    staticError (enum constant: CodegenIssueKind)
+    unexpectedSuccess (enum constant: CodegenIssueKind)
+    values (static const getter: List<CodegenIssueKind>)
+  CodegenBatchReport (type alias for ({List<({String caseId, String declarations, String? generatedCode, CodegenIssueKind kind, String message})> issues, int passedCases, int totalCases}))
+  CodegenIssue (type alias for ({String caseId, String declarations, String? generatedCode, CodegenIssueKind kind, String message}))
+  CodegenPartGenerator (type alias for FutureOr<String?> Function(LibraryElement, String))
   FuzzTarget (type alias for FutureOr<void> Function(Uint8List))
   StreamContractResult (type alias<T> for ({bool completed, List<T> items, Object? streamError, Object? uncaughtZoneError}))
 dart:async:
@@ -19,7 +37,9 @@ dart:core:
   Duration (referenced)
   Iterable (referenced)
   List (referenced)
+  Map (referenced)
   Object (referenced)
+  Pattern (referenced)
   String (referenced)
   bool (referenced)
   int (referenced)
@@ -27,3 +47,5 @@ dart:math:
   Random (referenced)
 dart:typed_data:
   Uint8List (referenced)
+package:analyzer/dart/element/element.dart:
+  LibraryElement (referenced)
