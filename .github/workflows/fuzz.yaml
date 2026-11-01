@@ -127,7 +127,7 @@ jobs:
 
       - name: Upload crash reproducers and coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-artifacts-${{ strategy.job-index }}
           include-hidden-files: true
