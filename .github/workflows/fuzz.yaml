@@ -78,10 +78,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pub-cache-
 
-      - name: Install clang and LLVM compiler-rt
-        if: ${{ inputs.mode == 'cgf' }}
-        run: sudo apt-get update && sudo apt-get install -y clang llvm libclang-rt-dev
-
       - name: Resolve target package dependencies
         working-directory: ${{ inputs.package-root }}
         run: dart pub get
