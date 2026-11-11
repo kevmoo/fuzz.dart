@@ -28,6 +28,7 @@ class ToolchainMissingException implements Exception {
 class NativeFuzzerBuilder {
   static const List<String> _clangCandidates = [
     'clang++',
+    'clang++-22',
     'clang++-21',
     'clang++-20',
     'clang++-19',

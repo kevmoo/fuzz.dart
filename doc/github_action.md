@@ -27,9 +27,9 @@ flowchart LR
      fuzzing dependencies**, keeping `dart analyze --fatal-infos`,
      `lower_bound.yml`, and `dart pub publish --dry-run` completely unaffected.
 2. **Non-Destructive AST Overlay (`.dart_tool/fuzz/`)**:
-   - The reusable workflow installs `clang`, `llvm`, and `libclang-rt-dev`,
-     activates `package:fuzz` globally from `kevmoo/fuzz.dart`, and runs
-     `fuzz run`.
+   - The reusable workflow activates `package:fuzz` globally from
+     `kevmoo/fuzz.dart` and runs `fuzz run` using the `clang++` and
+     `compiler-rt` toolchain pre-installed on `ubuntu-latest`.
    - `PackageOverlayInstrumentor` rewrites your package's `lib/` directory (plus
      any `instrument-packages` dependencies) into
      `.dart_tool/fuzz/instrumented/` with `$fuzzEdge`, `$fuzzEq`/`$fuzzLt`, and
