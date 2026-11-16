@@ -1,0 +1,8 @@
+import 'package:fuzz/src/fuzz_runtime.dart'; // ignore_for_file: type=lint, unawaited_return_in_try_block, duplicate_ignore
+void checkHeader(int magic, String tag) { $fuzzEdge(40503);
+  if ($fuzzEq(magic, 0xCAFEBABE, 15470)) { $fuzzEdge(55973);
+    if ($fuzzEq(tag, 'FUZZ', 30940)) { $fuzzEdge(5907);
+      throw StateError('Reached deep state!');
+    }
+  }
+}

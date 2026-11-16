@@ -132,8 +132,9 @@ imports to the instrumented copy. Subsequent runs automatically reuse the cached
 overlay when source files, `package_config.json`, and `package:fuzz` are
 unchanged (pass `--force-instrument` to force a full rebuild):
 
-```dart
-// Original source (lib/parser.dart):
+Original source (`lib/parser.dart`):
+
+```dart @example /test/readme/check_header.dart
 void checkHeader(int magic, String tag) {
   if (magic == 0xCAFEBABE) {
     if (tag == 'FUZZ') {
@@ -141,13 +142,15 @@ void checkHeader(int magic, String tag) {
     }
   }
 }
+```
 
-// Instrumented overlay (.dart_tool/fuzz/instrumented/lib/parser.dart):
-import 'package:fuzz/src/fuzz_runtime.dart';
+Instrumented overlay (`.dart_tool/fuzz/instrumented/lib/parser.dart`):
 
+```dart @example /test/readme/check_header.instrumented.txt
+import 'package:fuzz/src/fuzz_runtime.dart'; // ignore_for_file: type=lint, unawaited_return_in_try_block, duplicate_ignore
 void checkHeader(int magic, String tag) { $fuzzEdge(40503);
-  if ($fuzzBool($fuzzEq(magic, 0xCAFEBABE, 56032), 15530)) { $fuzzEdge(31060);
-    if ($fuzzBool($fuzzEq(tag, 'FUZZ', 46590), 6087)) { $fuzzEdge(21617);
+  if ($fuzzEq(magic, 0xCAFEBABE, 15470)) { $fuzzEdge(55973);
+    if ($fuzzEq(tag, 'FUZZ', 30940)) { $fuzzEdge(5907);
       throw StateError('Reached deep state!');
     }
   }
