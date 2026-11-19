@@ -50,11 +50,11 @@ int check(int a, String s) {
           ..contains('const Demo([int x = 3 == 3 ? 1 : 0]);');
 
         final parsed = parseString(content: out);
-        check(parsed.errors).isEmpty();
+        check(parsed.errors).isEmpty;
         check(instrumentor)
-          ..has((i) => i.edgesInserted, 'edgesInserted').isGreaterThan(0)
-          ..has((i) => i.comparesInserted, 'comparesInserted').equals(2)
-          ..has((i) => i.switchesInserted, 'switchesInserted').equals(1);
+          ..has('edgesInserted', (i) => i.edgesInserted).isGreaterThan(0)
+          ..has('comparesInserted', (i) => i.comparesInserted).equals(2)
+          ..has('switchesInserted', (i) => i.switchesInserted).equals(1);
       },
     );
 
@@ -73,13 +73,13 @@ bool isHeaderByte(int b) {
         final out = instrumentor.instrumentSource(partSample);
 
         check(out)
-          ..not((it) => it.contains('import '))
+          ..not(.it()..contains('import '))
           ..contains('// ignore_for_file: type=lint')
           ..contains(r'$fuzzEq(b, 0xFE,')
           ..contains(r'$fuzzLt(b, 0x20,');
 
         final parsed = parseString(content: out);
-        check(parsed.errors).isEmpty();
+        check(parsed.errors).isEmpty;
       },
     );
 
@@ -95,7 +95,7 @@ const int kVersion = 1;
       final barrelOut = barrelInstrumentor.instrumentSource(barrelSample);
       check(barrelOut)
         ..equals(barrelSample)
-        ..not((it) => it.contains('fuzz_runtime.dart'));
+        ..not(.it()..contains('fuzz_runtime.dart'));
 
       const zeroEditPartOfSample = '''
 part of 'parent.dart';
@@ -107,7 +107,7 @@ const int kPartConst = 42;
       );
       check(zeroEditPartOfOut)
         ..equals(zeroEditPartOfSample)
-        ..not((it) => it.contains('ignore_for_file'));
+        ..not(.it()..contains('ignore_for_file'));
 
       const parentWithPartSample = '''
 library parent;
@@ -141,11 +141,11 @@ int promotedLength(String? value, bool flag) {
         check(out)
           ..contains('value != null')
           ..contains('flag == true')
-          ..not((it) => it.contains(r'$fuzzNe(value, null'))
-          ..not((it) => it.contains(r'$fuzzEq(flag, true'));
+          ..not(.it()..contains(r'$fuzzNe(value, null'))
+          ..not(.it()..contains(r'$fuzzEq(flag, true'));
         check(instrumentor)
-          ..has((i) => i.comparesInserted, 'comparesInserted').equals(0)
-          ..has((i) => i.edgesInserted, 'edgesInserted').isGreaterThan(0);
+          ..has('comparesInserted', (i) => i.comparesInserted).equals(0)
+          ..has('edgesInserted', (i) => i.edgesInserted).isGreaterThan(0);
       },
     );
 
@@ -171,13 +171,13 @@ int evalPattern(int x) {
         // ConstantPattern inside if-case must stay a valid constant expression.
         check(out)
           ..contains('if (x case const (1 ^ 2))')
-          ..not((it) => it.contains(r'const ($fuzzXor'))
+          ..not(.it()..contains(r'const ($fuzzXor'))
           // Runtime guard expression in `when` clause must be instrumented.
           ..contains(r'$fuzzGt(v, 10,')
           ..contains(r'$fuzzEq(v, 42,');
 
         final parsed = parseString(content: out);
-        check(parsed.errors).isEmpty();
+        check(parsed.errors).isEmpty;
       },
     );
 
@@ -195,8 +195,8 @@ int check(int a, int b) {
 
         check(out)
           ..contains('assert(a == b && a > 0);')
-          ..not((it) => it.contains(r'$fuzzEq'))
-          ..not((it) => it.contains(r'$fuzzGt'))
+          ..not(.it()..contains(r'$fuzzEq'))
+          ..not(.it()..contains(r'$fuzzGt'))
           ..contains(r'$fuzzXor(a, b,');
         check(instrumentor.comparesInserted).equals(1);
 
@@ -240,10 +240,10 @@ String describeCode(int code) => switch (code) {
           );
 
         final parsed = parseString(content: out);
-        check(parsed.errors).isEmpty();
+        check(parsed.errors).isEmpty;
         check(instrumentor)
-          ..has((i) => i.edgesInserted, 'edgesInserted').equals(5)
-          ..has((i) => i.comparesInserted, 'comparesInserted').equals(1);
+          ..has('edgesInserted', (i) => i.edgesInserted).equals(5)
+          ..has('comparesInserted', (i) => i.comparesInserted).equals(1);
       },
     );
 
@@ -262,12 +262,12 @@ int clampSign(int x, bool neg, bool zero) =>
         ..contains(r'$fuzzExpr(');
 
       final parsed = parseString(content: out);
-      check(parsed.errors).isEmpty();
+      check(parsed.errors).isEmpty;
       // 1 arrow body + 2 outer ternary arms + 2 inner ternary arms = 5 edges;
       // 2 non-binary conditions (`zero` and `neg`) = 2 cmp sites.
       check(instrumentor)
-        ..has((i) => i.edgesInserted, 'edgesInserted').equals(5)
-        ..has((i) => i.comparesInserted, 'comparesInserted').equals(2);
+        ..has('edgesInserted', (i) => i.edgesInserted).equals(5)
+        ..has('comparesInserted', (i) => i.comparesInserted).equals(2);
     });
 
     test(r'wraps non-binary conditions in $fuzzBool while preserving type '
@@ -299,10 +299,10 @@ int scanItems(List<int> items, Object? maybeText) {
         ..contains('if (maybeText is String)')
         ..contains('if (!(maybeText != null))')
         ..contains('while (true)')
-        ..not((it) => it.contains(r'$fuzzBool(true'));
+        ..not(.it()..contains(r'$fuzzBool(true'));
 
       final parsed = parseString(content: out);
-      check(parsed.errors).isEmpty();
+      check(parsed.errors).isEmpty;
       check(instrumentor.comparesInserted).equals(2);
     });
 
@@ -327,12 +327,12 @@ int sumUp(List<int> xs) {
           ..contains(r'{ $fuzzEdge(46410); total++; }');
 
         final parsed = parseString(content: out);
-        check(parsed.errors).isEmpty();
+        check(parsed.errors).isEmpty;
         // 1 function body + 3 braceless loop bodies = 4 edges;
         // 3 binary loop conditions = 3 cmp sites.
         check(instrumentor)
-          ..has((i) => i.edgesInserted, 'edgesInserted').equals(4)
-          ..has((i) => i.comparesInserted, 'comparesInserted').equals(3);
+          ..has('edgesInserted', (i) => i.edgesInserted).equals(4)
+          ..has('comparesInserted', (i) => i.comparesInserted).equals(3);
       },
     );
 
@@ -404,16 +404,16 @@ class _SubEq {
         ..contains('position ??= match == null ? 0 : match.start;')
         // `super == other` is not rewritten into `$fuzzEq(super, other, id)`.
         ..contains('super == other')
-        ..not((it) => it.contains(r'$fuzzEq(super,'));
+        ..not(.it()..contains(r'$fuzzEq(super,'));
 
       final parsed = parseString(content: out);
-      check(parsed.errors).isEmpty();
+      check(parsed.errors).isEmpty;
 
       // Verify generic $fuzzXor on bool operands.
       $fuzzSiteHits[52317] = 0;
-      check($fuzzXor(true, false, 52317)).isTrue();
+      check($fuzzXor(true, false, 52317)).isTrue;
       check($fuzzSiteHits[52317]).equals(1);
-      check($fuzzXor(true, true, 52317)).isFalse();
+      check($fuzzXor(true, true, 52317)).isFalse;
       check($fuzzSiteHits[52317]).equals(3);
     });
 
@@ -479,20 +479,20 @@ int promoteVarDeclAndSwitch(int? a, int? b, Object c, bool flag, _Color col) {
         // 4. `switch (a)` with `case null:` and `switch (c)` with `case int():`
         // stay unwrapped so `a` and `c` promote in case bodies.
         ..contains('switch (a)')
-        ..not((it) => it.contains(r'$fuzzSwitch(a,'))
+        ..not(.it()..contains(r'$fuzzSwitch(a,'))
         ..contains('switch (c)')
-        ..not((it) => it.contains(r'$fuzzSwitch(c,'))
+        ..not(.it()..contains(r'$fuzzSwitch(c,'))
         // 5. Dot shorthands (`col == .red` and `case .blue:`) stay unwrapped so
         // their context type is preserved.
         ..contains('col == .red')
-        ..not((it) => it.contains(r'$fuzzEq(col, .red'))
-        ..not((it) => it.contains(r'$fuzzSwitch(col,'))
+        ..not(.it()..contains(r'$fuzzEq(col, .red'))
+        ..not(.it()..contains(r'$fuzzSwitch(col,'))
         // 6. `&&` boolean sub-clauses are individually wrapped with $fuzzBool.
         ..contains(r'$fuzzBool(total.isEven,')
         ..contains(r'$fuzzBool(total.isFinite,');
 
       final parsed = parseString(content: out);
-      check(parsed.errors).isEmpty();
+      check(parsed.errors).isEmpty;
     });
   });
 
@@ -567,11 +567,11 @@ void main() {
       );
 
       check(res)
-        ..has((r) => r.packageName, 'packageName').equals('sample_pkg')
-        ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(2)
-        ..has((r) => r.edgesInserted, 'edgesInserted').isGreaterThan(0)
-        ..has((r) => r.comparesInserted, 'comparesInserted').equals(2)
-        ..has((r) => r.switchesInserted, 'switchesInserted').equals(1);
+        ..has('packageName', (r) => r.packageName).equals('sample_pkg')
+        ..has('filesInstrumented', (r) => r.filesInstrumented).equals(2)
+        ..has('edgesInserted', (r) => r.edgesInserted).isGreaterThan(0)
+        ..has('comparesInserted', (r) => r.comparesInserted).equals(2)
+        ..has('switchesInserted', (r) => r.switchesInserted).equals(1);
 
       // Original source in lib/ must remain 100% untouched.
       check(File(p.join(pkgRoot, 'lib', 'sample_pkg.dart')).readAsStringSync())
@@ -585,7 +585,7 @@ void main() {
       ).readAsStringSync();
       check(instRoot).contains("import 'package:fuzz/src/fuzz_runtime.dart';");
       check(instPart)
-        ..not((it) => it.contains('import '))
+        ..not(.it()..contains('import '))
         ..contains(r'$fuzzGt(x, 5,');
 
       // Overlay package_config.json preserves sample_pkg rootUri and remaps
@@ -630,13 +630,13 @@ void main() {
         siteHits: $fuzzSiteHits,
       );
       check(report)
-        ..has((r) => r.packageName, 'packageName').equals('sample_pkg')
-        ..has((r) => r.hitSites, 'hitSites').equals(1)
-        ..has((r) => r.totalSites, 'totalSites').equals(sites.length)
-        ..has((r) => r.totalEdges, 'totalEdges').equals(res.edgesInserted)
+        ..has('packageName', (r) => r.packageName).equals('sample_pkg')
+        ..has('hitSites', (r) => r.hitSites).equals(1)
+        ..has('totalSites', (r) => r.totalSites).equals(sites.length)
+        ..has('totalEdges', (r) => r.totalEdges).equals(res.edgesInserted)
         ..has(
-          (r) => r.totalCompares,
           'totalCompares',
+          (r) => r.totalCompares,
         ).equals(res.comparesInserted);
       check(report.files.first.uncoveredLines).contains(7);
       check(report.files.map((f) => f.file))
@@ -723,16 +723,16 @@ void main() {
 
       // Both host_pkg (1 file) and dep_pkg (1 file) must be instrumented.
       check(res)
-        ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(2)
+        ..has('filesInstrumented', (r) => r.filesInstrumented).equals(2)
         ..has(
-          (r) => r.overlayPackageConfigPath,
           'overlayPackageConfigPath',
+          (r) => r.overlayPackageConfigPath,
         ).equals(p.join(customWorkDir, 'package_config.json'));
 
       // Default .dart_tool/fuzz directory inside host_pkg must not be created
       // when custom workDir is used.
       check(Directory(p.join(hostRoot, '.dart_tool', 'fuzz')).existsSync())
-          .isFalse();
+          .isFalse;
 
       // Verify the child Dart VM resolves both instrumented packages and runs.
       final vmRes = await Process.run(Platform.resolvedExecutable, [
@@ -753,7 +753,7 @@ void main() {
         ..contains('lib/host_pkg.dart')
         ..contains('package:dep_pkg/lib/dep_pkg.dart');
       check(res.dictionaryTokensExtracted).isGreaterOrEqual(1);
-      check(File(res.dictionaryPath).existsSync()).isTrue();
+      check(File(res.dictionaryPath).existsSync()).isTrue;
       check(File(res.dictionaryPath).readAsStringSync()).contains('"YAML"');
     });
 
@@ -792,11 +792,11 @@ void wrapFormatException(String label, String input) {}
           ..contains('Wed')
           ..contains('0')
           ..contains('\r\n')
-          ..not((it) => it.contains('dart:convert'))
-          ..not((it) => it.contains('HTTP date'))
-          ..not((it) => it.contains('emoji_0'))
-          ..not((it) => it.contains(r'\d+\r\n'))
-          ..not((it) => it.contains('Do not put this error prose in dict'));
+          ..not(.it()..contains('dart:convert'))
+          ..not(.it()..contains('HTTP date'))
+          ..not(.it()..contains('emoji_0'))
+          ..not(.it()..contains(r'\d+\r\n'))
+          ..not(.it()..contains('Do not put this error prose in dict'));
 
         final formatted = formatFuzzDictionary(instrumentor.dictionaryTokens);
         check(formatted)
@@ -878,7 +878,7 @@ Future<void> fuzzTarget(Uint8List bytes) async {
       check(
         File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'fuzz_entrypoint.dart'))
             .existsSync(),
-      ).isTrue();
+      ).isTrue;
       final covReport = jsonDecode(
         File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'coverage_report.json'))
             .readAsStringSync(),
@@ -887,8 +887,8 @@ Future<void> fuzzTarget(Uint8List bytes) async {
       check(
         Directory(p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes'))
             .existsSync(),
-      ).isTrue();
-      check(Directory(corpusDir).existsSync()).isTrue();
+      ).isTrue;
+      check(Directory(corpusDir).existsSync()).isTrue;
     });
 
     test('fuzz run writes crash artifacts into .dart_tool/fuzz/crashes/ by '
@@ -950,7 +950,7 @@ void fuzzTarget(Uint8List bytes) {
           .whereType<File>()
           .where((f) => p.basename(f.path).startsWith('crash-'))
           .toList();
-      check(rootCrashFiles).isEmpty();
+      check(rootCrashFiles).isEmpty;
 
       // .dart_tool/fuzz/crashes/ must contain the crash file.
       final crashesDir = Directory(
@@ -1052,7 +1052,7 @@ void fuzzTarget(Uint8List bytes) {
       check(missingReproRes.stderr.toString())
           .contains('Reproducer file not found');
       check(Directory(p.join(pkgRoot, 'crash-doesnotexist')).existsSync())
-          .isFalse();
+          .isFalse;
     });
 
     test('fuzz run prefers fuzzTarget over helper main() and rejects scripts '
@@ -1198,7 +1198,7 @@ void fuzzTarget(Uint8List bytes) {
       final reportFile = File(
         p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes_report.json'),
       );
-      check(reportFile.existsSync()).isTrue();
+      check(reportFile.existsSync()).isTrue;
       final reportJson =
           jsonDecode(reportFile.readAsStringSync()) as Map<String, Object?>;
       check(reportJson)
@@ -1306,7 +1306,7 @@ void fuzzTarget(Uint8List bytes) {
         check(
           File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'crashes_report.json'))
               .existsSync(),
-        ).isFalse();
+        ).isFalse;
       },
     );
 
@@ -1364,8 +1364,8 @@ int checkValue(int v) {
           packageRoot: pkgRoot,
         );
         check(first)
-          ..has((r) => r.cached, 'cached').isFalse()
-          ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(1);
+          ..has('cached', (r) => r.cached).isFalse
+          ..has('filesInstrumented', (r) => r.filesInstrumented).equals(1);
         final outDart = File(
           p.join(first.instrumentedLibDir, 'cached_pkg.dart'),
         );
@@ -1377,18 +1377,18 @@ int checkValue(int v) {
           packageRoot: pkgRoot,
         );
         check(second)
-          ..has((r) => r.cached, 'cached').isTrue()
+          ..has('cached', (r) => r.cached).isTrue
           ..has(
-            (r) => r.filesInstrumented,
             'filesInstrumented',
+            (r) => r.filesInstrumented,
           ).equals(first.filesInstrumented)
           ..has(
-            (r) => r.edgesInserted,
             'edgesInserted',
+            (r) => r.edgesInserted,
           ).equals(first.edgesInserted)
           ..has(
-            (r) => r.comparesInserted,
             'comparesInserted',
+            (r) => r.comparesInserted,
           ).equals(first.comparesInserted);
         check(outDart.lastModifiedSync()).equals(mtimeAfterFirst);
 
@@ -1397,7 +1397,7 @@ int checkValue(int v) {
           packageRoot: pkgRoot,
           force: true,
         );
-        check(forced.cached).isFalse();
+        check(forced.cached).isFalse;
 
         // 3. Adding a file in lib/ invalidates cache (`cached: false`).
         final extraFile = File(p.join(pkgRoot, 'lib', 'extra.dart'))
@@ -1406,11 +1406,11 @@ int checkValue(int v) {
           packageRoot: pkgRoot,
         );
         check(afterAdd)
-          ..has((r) => r.cached, 'cached').isFalse()
-          ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(2);
+          ..has('cached', (r) => r.cached).isFalse
+          ..has('filesInstrumented', (r) => r.filesInstrumented).equals(2);
         check(
           File(p.join(afterAdd.instrumentedLibDir, 'extra.dart')).existsSync(),
-        ).isTrue();
+        ).isTrue;
 
         // 4. Deleting a file in lib/ invalidates cache (`cached: false`) and
         // removes the stale file from instrumented/lib/.
@@ -1419,12 +1419,12 @@ int checkValue(int v) {
           packageRoot: pkgRoot,
         );
         check(afterDelete)
-          ..has((r) => r.cached, 'cached').isFalse()
-          ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(1);
+          ..has('cached', (r) => r.cached).isFalse
+          ..has('filesInstrumented', (r) => r.filesInstrumented).equals(1);
         check(
           File(p.join(afterDelete.instrumentedLibDir, 'extra.dart'))
               .existsSync(),
-        ).isFalse();
+        ).isFalse;
 
         // 5. Editing an existing file in lib/ (even if mtime moves backward!)
         // invalidates cache (`cached: false`).
@@ -1441,10 +1441,10 @@ int checkValue(int v) {
               packageRoot: pkgRoot,
             );
         check(afterBackwardEdit)
-          ..has((r) => r.cached, 'cached').isFalse()
+          ..has('cached', (r) => r.cached).isFalse
           ..has(
-            (r) => r.comparesInserted,
             'comparesInserted',
+            (r) => r.comparesInserted,
           ).isGreaterThan(first.comparesInserted);
 
         // 6. Changing `additionalPackages` invalidates cache (`cached: false`).
@@ -1453,15 +1453,15 @@ int checkValue(int v) {
           additionalPackages: const ['dep_pkg'],
         );
         check(withDep)
-          ..has((r) => r.cached, 'cached').isFalse()
-          ..has((r) => r.filesInstrumented, 'filesInstrumented').equals(2);
+          ..has('cached', (r) => r.cached).isFalse
+          ..has('filesInstrumented', (r) => r.filesInstrumented).equals(2);
 
         final withDepCached =
             await PackageOverlayInstrumentor.instrumentPackage(
               packageRoot: pkgRoot,
               additionalPackages: const ['dep_pkg'],
             );
-        check(withDepCached.cached).isTrue();
+        check(withDepCached.cached).isTrue;
 
         // 7. Deleting a generated output artifact (`auto.dict` or an individual
         // instrumented `.dart` file) invalidates cache (`cached: false`) and
@@ -1472,8 +1472,8 @@ int checkValue(int v) {
               packageRoot: pkgRoot,
               additionalPackages: const ['dep_pkg'],
             );
-        check(afterMissingDict.cached).isFalse();
-        check(File(afterMissingDict.dictionaryPath).existsSync()).isTrue();
+        check(afterMissingDict.cached).isFalse;
+        check(File(afterMissingDict.dictionaryPath).existsSync()).isTrue;
 
         final missingLibOut = File(
           p.join(afterMissingDict.instrumentedLibDir, 'cached_pkg.dart'),
@@ -1483,8 +1483,8 @@ int checkValue(int v) {
               packageRoot: pkgRoot,
               additionalPackages: const ['dep_pkg'],
             );
-        check(afterMissingLibOut.cached).isFalse();
-        check(missingLibOut.existsSync()).isTrue();
+        check(afterMissingLibOut.cached).isFalse;
+        check(missingLibOut.existsSync()).isTrue;
 
         // 8. CLI `fuzz instrument` reports "Reused cached" on hit and
         // "Instrumented" with `--force-instrument`.
@@ -1521,7 +1521,7 @@ int checkValue(int v) {
           packageRoot: movedPkgRoot,
           additionalPackages: const ['dep_pkg'],
         );
-        check(afterMove.cached).isFalse();
+        check(afterMove.cached).isFalse;
         check(File(afterMove.overlayPackageConfigPath).readAsStringSync())
             .contains('cache_workspace_moved');
       },
@@ -1719,9 +1719,9 @@ void fuzzTarget(Uint8List bytes) {
         ..contains('"BEARER_JWT"')
         ..contains('"RS256"')
         ..contains('"JWT_PART_FORBIDDEN"')
-        ..not((it) => it.contains('UNRELATED_HTML_DIV'))
-        ..not((it) => it.contains('UNRELATED_HTML_SPAN'))
-        ..not((it) => it.contains('UNRELATED_SEARCH_QUERY'));
+        ..not(.it()..contains('UNRELATED_HTML_DIV'))
+        ..not(.it()..contains('UNRELATED_HTML_SPAN'))
+        ..not(.it()..contains('UNRELATED_SEARCH_QUERY'));
 
       // 2. coverage_report.json and stdout table must include only reachable
       // files and report omitted unreachable files/sites.
@@ -1765,8 +1765,8 @@ void fuzzTarget(Uint8List bytes) {
       ).readAsStringSync();
       check(searchDictContent)
         ..contains('"UNRELATED_SEARCH_QUERY"')
-        ..not((it) => it.contains('BEARER_JWT'))
-        ..not((it) => it.contains('UNRELATED_HTML_DIV'));
+        ..not(.it()..contains('BEARER_JWT'))
+        ..not(.it()..contains('UNRELATED_HTML_DIV'));
       final searchCovJson = jsonDecode(
         File(p.join(pkgRoot, '.dart_tool', 'fuzz', 'coverage_report.json'))
             .readAsStringSync(),

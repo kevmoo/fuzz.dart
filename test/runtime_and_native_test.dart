@@ -15,7 +15,7 @@ import 'package:test_descriptor/test_descriptor.dart' as d;
 extension _PrintsChecks on Subject<FutureOr<void> Function()> {
   Future<void> printsOutput(Condition<String> outputCondition) async {
     await context.expectAsync(
-      () => ['prints output that:', ...describe(outputCondition)],
+      () => ['prints output that:', ...outputCondition.describeSync()],
       (actual) async {
         final buffer = StringBuffer();
         await runZoned(
@@ -27,7 +27,7 @@ extension _PrintsChecks on Subject<FutureOr<void> Function()> {
           ),
         );
         final printed = buffer.toString();
-        final failure = softCheck(printed, outputCondition);
+        final failure = outputCondition.softCheckSync(printed);
         if (failure == null) return null;
         return Rejection(
           actual: prefixFirst('printed ', literal(printed)),
@@ -48,7 +48,7 @@ void main() {
       final resolved = await NativeFuzzerBuilder.resolveFuzzerCcPath(
         fallbackOutputDir: d.sandbox,
       );
-      check(File(resolved).existsSync()).isTrue();
+      check(File(resolved).existsSync()).isTrue;
     });
 
     test('fails hard with ToolchainMissingException and pure-dart hint when '
@@ -57,7 +57,7 @@ void main() {
         NativeFuzzerBuilder.findClangExecutable(
           environment: {'CLANG_CXX': '/nonexistent/clang++'},
         ),
-      ).isNull();
+      ).isNull;
 
       await check(
         NativeFuzzerBuilder.buildSharedLibrary(
@@ -65,11 +65,14 @@ void main() {
           clangExecutable: '/nonexistent/clang++',
         ),
       ).throws<ToolchainMissingException>(
-        (it) => it.has((e) => e.toString(), 'message')
-          ..contains('--mode=cgf')
-          ..contains('--mode=pure-dart')
-          ..contains('clang')
-          ..contains('libclang-rt-dev'),
+        .it()
+          ..has('message', (e) => e.toString()).which(
+            .it()
+              ..contains('--mode=cgf')
+              ..contains('--mode=pure-dart')
+              ..contains('clang')
+              ..contains('libclang-rt-dev'),
+          ),
       );
     });
   });
@@ -82,21 +85,21 @@ void main() {
       $fuzzPrevLoc = 0;
 
       $fuzzEdge(101);
-      check($fuzzEq(1000, 1000, 202)).isTrue();
-      check($fuzzNe('alpha', 'beta', 303)).isTrue();
-      check($fuzzLt(0, 4, 404)).isTrue();
-      check($fuzzLe(4, 4, 405)).isTrue();
-      check($fuzzGt(9, 4, 406)).isTrue();
-      check($fuzzGe(9, 9, 407)).isTrue();
+      check($fuzzEq(1000, 1000, 202)).isTrue;
+      check($fuzzNe('alpha', 'beta', 303)).isTrue;
+      check($fuzzLt(0, 4, 404)).isTrue;
+      check($fuzzLe(4, 4, 405)).isTrue;
+      check($fuzzGt(9, 4, 406)).isTrue;
+      check($fuzzGe(9, 9, 407)).isTrue;
       check($fuzzXor(0x41, 0x61, 505)).equals(0x20);
       check($fuzzSwitch('hdr', <Object?>['hdr', 'body'], 606)).equals('hdr');
       check($fuzzExpr(707, 'payload')).equals('payload');
       check($fuzzSiteHits[707]).equals(1);
 
       $fuzzSiteHits[808] = 0;
-      check($fuzzBool(true, 808)).isTrue();
+      check($fuzzBool(true, 808)).isTrue;
       check($fuzzSiteHits[808]).equals(1);
-      check($fuzzBool(false, 808)).isFalse();
+      check($fuzzBool(false, 808)).isFalse;
       check($fuzzSiteHits[808]).equals(3);
 
       final nonZero = $fuzzCovMap.where((b) => b != 0).length;
@@ -123,13 +126,13 @@ void main() {
           fuzzerArgs: const ['-runs=3000', '-max_len=16'],
         ),
       ).printsOutput(
-        (it) => it
+        .it()
           ..startsWith('INFO: Seed: ')
           ..contains('#1\tINITED\t')
           ..contains('#3000\tDONE\t'),
       );
-      check(foundRhsMagic).isTrue();
-      check(foundLhsMagic).isTrue();
+      check(foundRhsMagic).isTrue;
+      check(foundLhsMagic).isTrue;
     });
 
     test('respects -seed, persists new inputs to corpus dir, and omits '
@@ -149,16 +152,16 @@ void main() {
           fuzzerArgs: ['-runs=15', '-seed=42', corpusPath],
         ),
       ).printsOutput(
-        (it) => it
+        .it()
           ..startsWith('INFO: Seed: 42\n#1\tINITED\t')
           ..contains('#15\tDONE\t'),
       );
 
       // First input in an empty corpus must be the 0-byte seed, without
       // injecting CRLF hex strings when no seed files exist.
-      check(seenRun1.first).isEmpty();
+      check(seenRun1.first).isEmpty;
       check(seenRun1.map(String.fromCharCodes))
-          .not((it) => it.contains('7fffffffffffffff\r\n'));
+          .not(.it()..contains('7fffffffffffffff\r\n'));
 
       // Newly discovered coverage-increasing inputs must be persisted to
       // corpusPath.
@@ -166,7 +169,7 @@ void main() {
           .listSync()
           .whereType<File>()
           .toList();
-      check(persistedFiles).isNotEmpty();
+      check(persistedFiles).isNotEmpty;
 
       // Re-running with the same -seed against a fresh directory must explore
       // the exact same sequence of inputs.
@@ -183,7 +186,7 @@ void main() {
           fuzzerArgs: ['-runs=15', '-seed=42', corpusPath2],
         ),
       ).printsOutput(
-        (it) => it
+        .it()
           ..startsWith('INFO: Seed: 42\n#1\tINITED\t')
           ..contains('#15\tDONE\t'),
       );
@@ -236,7 +239,7 @@ void main(List<String> args) {
         '-exact_artifact_path=$exactPath',
       ]);
       check(because: '${exactRes.stderr}', exactRes.exitCode).equals(77);
-      check(File(exactPath).existsSync()).isTrue();
+      check(File(exactPath).existsSync()).isTrue;
     });
 
     test('loads -dict=<path> tokens in Pure-Dart mode and discovers '
@@ -259,11 +262,11 @@ void main(List<String> args) {
           fuzzerArgs: ['-runs=80', '-seed=7', '-dict=${dictFile.path}'],
         ),
       ).printsOutput(
-        (it) => it
+        .it()
           ..startsWith('INFO: Seed: 7\n#1\tINITED\t')
           ..contains('#80\tDONE\t'),
       );
-      check(matchedMagic).isTrue();
+      check(matchedMagic).isTrue;
     });
 
     test('drives async Future/Stream targets synchronously per input, '
@@ -302,14 +305,14 @@ void main(List<String> args) {
           fuzzerArgs: const ['-runs=1500', '-max_len=16'],
         ),
       ).printsOutput(
-        (it) => it
+        .it()
           ..startsWith('INFO: Seed: ')
           ..contains('#1\tINITED\t')
           ..contains('#1500\tDONE\t'),
       );
       check($fuzzSiteHits[301]).equals(1);
-      check(solvedPostAwaitMagic).isTrue();
-      check(unawaitedPostCancelRan).isTrue();
+      check(solvedPostAwaitMagic).isTrue;
+      check(unawaitedPostCancelRan).isTrue;
 
       // An async target that awaits an uncompleted Completer (without a timer)
       // must fail deterministically with exitCode 77 rather than silently
@@ -371,9 +374,9 @@ void main(List<String> args) {
       $fuzzPrevLoc = 0;
 
       $fuzzEdge(77);
-      check($fuzzEq(0xCAFEBABE, 0xCAFEBABE, 88)).isTrue();
-      check($fuzzEq('magic', 'magic', 99)).isTrue();
-      check($fuzzEq(const [0x46, 0x55], const [0x46, 0x5A], 100)).isFalse();
+      check($fuzzEq(0xCAFEBABE, 0xCAFEBABE, 88)).isTrue;
+      check($fuzzEq('magic', 'magic', 99)).isTrue;
+      check($fuzzEq(const [0x46, 0x55], const [0x46, 0x5A], 100)).isFalse;
       check($fuzzCovMap.where((b) => b != 0).length).isGreaterOrEqual(4);
 
       // Verify switching to pureDart and back to cgf preserves native siteHits
@@ -450,7 +453,7 @@ void main(List<String> args) {
       check(because: '${result.stderr}', result.exitCode).equals(77);
       final stderrStr = result.stderr as String;
       check(stderrStr)
-        ..not((it) => it.contains('unreachable code'))
+        ..not(.it()..contains('unreachable code'))
         ..contains('DEDUPLICATED CRASH SUMMARY')
         ..contains('StateError')
         ..contains('ArgumentError');
@@ -466,8 +469,8 @@ void main(List<String> args) {
       final siteHitsBytes = File(siteHitsPath).readAsBytesSync();
       check(siteHitsBytes)
         ..length.equals(FuzzRuntime.numCounters)
-        ..has((b) => b[42], 'siteHits[42]').equals(1)
-        ..has((b) => b[43], 'siteHits[43]').equals(1);
+        ..has('siteHits[42]', (b) => b[42]).equals(1)
+        ..has('siteHits[43]', (b) => b[43]).equals(1);
     });
   });
 }

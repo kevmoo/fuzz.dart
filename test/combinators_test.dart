@@ -119,7 +119,7 @@ void main() {
           hungCancelTransformer,
           timeout: const Duration(milliseconds: 10),
         );
-        check(hungResult.completed).isFalse();
+        check(hungResult.completed).isFalse;
       },
     );
 
