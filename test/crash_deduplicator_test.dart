@@ -38,10 +38,10 @@ void main() {
         traceCol10,
       );
       check(first)
-        ..has((r) => r.isNew, 'isNew').isTrue()
-        ..has((r) => r.isMinimized, 'isMinimized').isFalse()
-        ..has((r) => r.record.index, 'record.index').equals(1)
-        ..has((r) => r.record.hitCount, 'record.hitCount').equals(1);
+        ..has('isNew', (r) => r.isNew).isTrue
+        ..has('isMinimized', (r) => r.isMinimized).isFalse
+        ..has('record.index', (r) => r.record.index).equals(1)
+        ..has('record.hitCount', (r) => r.record.hitCount).equals(1);
       check(File(first.record.artifactPath).readAsBytesSync())
           .deepEquals(longInput);
 
@@ -54,17 +54,17 @@ void main() {
         traceCol99,
       );
       check(second)
-        ..has((r) => r.isNew, 'isNew').isFalse()
-        ..has((r) => r.isMinimized, 'isMinimized').isTrue()
+        ..has('isNew', (r) => r.isNew).isFalse
+        ..has('isMinimized', (r) => r.isMinimized).isTrue
         ..has(
-          (r) => r.previousLength,
           'previousLength',
+          (r) => r.previousLength,
         ).equals(longInput.length)
-        ..has((r) => r.record.index, 'record.index').equals(1)
-        ..has((r) => r.record.hitCount, 'record.hitCount').equals(2)
+        ..has('record.index', (r) => r.record.index).equals(1)
+        ..has('record.hitCount', (r) => r.record.hitCount).equals(2)
         ..has(
-          (r) => r.record.shortestInput,
           'record.shortestInput',
+          (r) => r.record.shortestInput,
         ).deepEquals(shortInput);
       check(File(first.record.artifactPath).readAsBytesSync())
           .deepEquals(shortInput);
@@ -77,14 +77,14 @@ void main() {
         traceCol10,
       );
       check(third)
-        ..has((r) => r.isNew, 'isNew').isFalse()
-        ..has((r) => r.isMinimized, 'isMinimized').isFalse()
-        ..has((r) => r.record.hitCount, 'record.hitCount').equals(3);
+        ..has('isNew', (r) => r.isNew).isFalse
+        ..has('isMinimized', (r) => r.isMinimized).isFalse
+        ..has('record.hitCount', (r) => r.record.hitCount).equals(3);
       check(File(first.record.artifactPath).readAsBytesSync())
           .deepEquals(shortInput);
       check(dedup)
-        ..has((d) => d.records, 'records').length.equals(1)
-        ..has((d) => d.totalHits, 'totalHits').equals(3);
+        ..has('records', (d) => d.records).length.equals(1)
+        ..has('totalHits', (d) => d.totalHits).equals(3);
     });
 
     test('disambiguates crashes in shared helper packages by targetPackage '
@@ -117,13 +117,13 @@ void main() {
       );
 
       check(resA)
-        ..has((r) => r.isNew, 'isNew').isTrue()
-        ..has((r) => r.record.primaryBlame, 'record.primaryBlame').equals(
+        ..has('isNew', (r) => r.isNew).isTrue
+        ..has('record.primaryBlame', (r) => r.record.primaryBlame).equals(
           'ScssParser.interpolation (package:sass/src/parse/scss.dart:120)',
         );
       check(resB)
-        ..has((r) => r.isNew, 'isNew').isTrue()
-        ..has((r) => r.record.primaryBlame, 'record.primaryBlame').equals(
+        ..has('isNew', (r) => r.isNew).isTrue
+        ..has('record.primaryBlame', (r) => r.record.primaryBlame).equals(
           'StylesheetParser.mediaQuery '
           '(package:sass/src/parse/stylesheet.dart:250)',
         );
@@ -168,17 +168,17 @@ void main() {
     test('fromFuzzerArgs disables keepGoing on -exact_artifact_path=, '
         '-minimize_crash=1, and -keep_going=0', () {
       check(CrashDeduplicator.fromFuzzerArgs(const ['-runs=10']).keepGoing)
-          .isTrue();
+          .isTrue;
       check(
         CrashDeduplicator.fromFuzzerArgs(const [
           '-exact_artifact_path=/tmp/repro',
         ]).keepGoing,
-      ).isFalse();
+      ).isFalse;
       check(
         CrashDeduplicator.fromFuzzerArgs(const ['-minimize_crash=1']).keepGoing,
-      ).isFalse();
+      ).isFalse;
       check(CrashDeduplicator.fromFuzzerArgs(const ['-keep_going=0']).keepGoing)
-          .isFalse();
+          .isFalse;
     });
   });
 }
