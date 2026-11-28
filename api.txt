@@ -3,11 +3,11 @@ environment:
 executables:
   fuzz
 package:fuzz/fuzz.dart:
-  fuzzBoundaryHexStrings (static const getter: List<String>)
-  fuzzBoundaryInts (static const getter: List<int>)
-  captureStreamZoneErrors (function: Future<({bool completed, List<T> items, Object? streamError, Object? uncaughtZoneError})> Function<S, T>(Stream<S>, StreamTransformer<S, T>, {Duration timeout}))
-  verifyChunkSplitEquivalence (function: void Function<T>({bool Function(T, T)? equals, required List<int> Function(Random) generateEncodedStream, int iterations, int maxStep, required T Function(Iterable<List<int>>) parseChunked, required T Function(List<int>) parseFull, int seed}))
-  verifyNoUnescapedCrlf (function: void Function(String, {String context}))
+  fuzzBoundaryHexStrings (static const getter: List<String> = ['0', '7fffffff', '80000000', 'ffffffff', '7fffffffffffffff', '8000000000000000', 'ffffffffffffffff', '10000000000000000', '10000000000000003'])
+  fuzzBoundaryInts (static const getter: List<int> = [-9223372036854775808, -2147483649, -2147483648, -65536, -256, -1, 0, 1, 127, 128, 255, 256, 65535, 65536, 2147483647, 2147483648, 4294967295, 4294967296, 9223372036854775807])
+  captureStreamZoneErrors (function: Future<({bool completed, List<T> items, Object? streamError, Object? uncaughtZoneError})> Function<S, T>(Stream<S>, StreamTransformer<S, T>, {Duration timeout = Duration(milliseconds: 50)}))
+  verifyChunkSplitEquivalence (function: void Function<T>({bool Function(T, T)? equals, required List<int> Function(Random) generateEncodedStream, int iterations = 200, int maxStep = 7, required T Function(Iterable<List<int>>) parseChunked, required T Function(List<int>) parseFull, int seed = 12345}))
+  verifyNoUnescapedCrlf (function: void Function(String, {String context = 'serialized'}))
   FuzzTarget (type alias for FutureOr<void> Function(Uint8List))
   StreamContractResult (type alias<T> for ({bool completed, List<T> items, Object? streamError, Object? uncaughtZoneError}))
 dart:async:
